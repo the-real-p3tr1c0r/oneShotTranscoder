@@ -1,0 +1,14 @@
+name: pcp
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.9
+  - ffmpeg
+  - pip
+  - pip:
+    - -e .
+    - pytesseract
+    - pgsrip
+    - babelfish
+

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "transcoder"
+version = "0.1.0"
+description = "Transcoder project"
+requires-python = ">=3.9"
+dependencies = [
+    "pytesseract",
+    "pgsrip",
+    "babelfish",
+]
+
+[project.scripts]
+transcode = "transcoder.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["transcoder*"]
+
