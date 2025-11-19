@@ -12,6 +12,7 @@ dependencies = [
     "opencv-python",
     "babelfish",
     "pgsrip",
+    "numpy",
 ]
 
 [project.scripts]

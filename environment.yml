@@ -12,4 +12,5 @@ dependencies:
     - opencv-python
     - babelfish
     - pgsrip
+    - numpy
 
