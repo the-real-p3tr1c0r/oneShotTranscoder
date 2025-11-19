@@ -99,8 +99,15 @@ def get_video_duration(probe_data: Dict) -> float:
     return duration
 
 
-def get_text_subtitle_streams(probe_data: Dict) -> List[int]:
-    """Identify text-based subtitle stream indices."""
+def get_text_subtitle_streams(probe_data: Dict) -> List[Tuple[int, Optional[str]]]:
+    """
+    Identify text-based subtitle stream indices with language information.
+    
+    Returns:
+        List of tuples (stream_index, language_code) where language_code is ISO 639-2
+    """
+    from babelfish import Language as BabelLanguage
+    
     text_subtitle_codecs = {
         "srt",
         "ass",
@@ -119,6 +126,52 @@ def get_text_subtitle_streams(probe_data: Dict) -> List[int]:
         "xsub",
     }
     
+    def normalize_language_tag(code: Optional[str]) -> Optional[str]:
+        """Normalize language code to ISO 639-2."""
+        if not code:
+            return None
+        
+        code_lower = code.lower().strip()
+        
+        # If already 3-letter, check if it's ISO 639-2
+        if len(code_lower) == 3 and code_lower.isalpha():
+            # Map common variations to ISO 639-2
+            iso6392_map = {
+                "fre": "fra",  # French bibliographic -> terminological
+                "chi": "zho",  # Chinese bibliographic -> terminological
+                "cze": "ces",  # Czech bibliographic -> terminological
+                "dut": "nld",  # Dutch bibliographic -> terminological
+                "ger": "deu",  # German bibliographic -> terminological
+                "gre": "ell",  # Greek bibliographic -> terminological
+                "ice": "isl",  # Icelandic bibliographic -> terminological
+                "mac": "mkd",  # Macedonian bibliographic -> terminological
+                "rum": "ron",  # Romanian bibliographic -> terminological
+                "slo": "slk",  # Slovak bibliographic -> terminological
+            }
+            if code_lower in iso6392_map:
+                return iso6392_map[code_lower]
+            # Try to validate with babelfish
+            try:
+                lang = BabelLanguage(code_lower)
+                iso6392 = getattr(lang, 'alpha3', None)
+                if iso6392 and len(iso6392) == 3:
+                    return iso6392.lower()
+                return code_lower
+            except Exception:
+                return code_lower
+        
+        # Try to resolve using babelfish
+        for resolver in (BabelLanguage.fromietf, BabelLanguage):
+            try:
+                lang = resolver(code)
+                iso6392 = getattr(lang, 'alpha3', None)
+                if iso6392 and len(iso6392) == 3:
+                    return iso6392.lower()
+            except Exception:
+                continue
+        
+        return code_lower
+    
     text_streams = []
     
     if "streams" not in probe_data:
@@ -129,16 +182,23 @@ def get_text_subtitle_streams(probe_data: Dict) -> List[int]:
             continue
         
         codec_name = stream.get("codec_name", "").lower()
+        is_text_subtitle = False
         
         if codec_name in text_subtitle_codecs:
-            text_streams.append(stream.get("index", len(text_streams)))
+            is_text_subtitle = True
         elif codec_name not in image_subtitle_codecs:
             codec_long_name = stream.get("codec_long_name", "").lower()
             if any(
                 text_codec in codec_long_name
                 for text_codec in text_subtitle_codecs
             ):
-                text_streams.append(stream.get("index", len(text_streams)))
+                is_text_subtitle = True
+        
+        if is_text_subtitle:
+            stream_index = stream.get("index")
+            tags = stream.get("tags") or {}
+            language = normalize_language_tag(tags.get("language"))
+            text_streams.append((stream_index, language))
     
     return text_streams
 
@@ -200,7 +260,21 @@ def find_mkv_files(directory: Path) -> List[Path]:
     return sorted(directory.glob("*.mkv"))
 
 
-def get_output_path(input_path: Path) -> Path:
-    """Generate output .mp4 path from input .mkv path."""
+def get_output_path(input_path: Path, target_dir: Optional[Path] = None) -> Path:
+    """
+    Generate output .mp4 path from input .mkv path.
+    
+    Args:
+        input_path: Path to input .mkv file
+        target_dir: Optional target directory for output. If None, output is in same directory as input.
+    
+    Returns:
+        Path to output .mp4 file
+    """
+    if target_dir:
+        # Ensure target directory exists
+        target_dir.mkdir(parents=True, exist_ok=True)
+        # Use same filename but with .mp4 extension
+        return target_dir / input_path.with_suffix(".mp4").name
     return input_path.with_suffix(".mp4")
 

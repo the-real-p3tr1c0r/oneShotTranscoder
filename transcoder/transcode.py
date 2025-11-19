@@ -6,9 +6,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Tuple
-
-import pytesseract
+from typing import List, Optional, Tuple
 
 from transcoder.metadata import (
     DEFAULT_FILENAME_PATTERN,
@@ -21,9 +19,7 @@ from transcoder.subtitles import (
     GeneratedSubtitle,
     SubtitleStreamInfo,
     convert_bitmap_subtitles,
-    list_tesseract_languages,
     probe_subtitle_streams,
-    resolve_tesseract_path,
 )
 from transcoder.utils import (
     calculate_target_bitrate,
@@ -41,7 +37,7 @@ def build_transcode_command(
     input_path: Path,
     output_path: Path,
     video_bitrate_kbps: float,
-    subtitle_streams: List[int],
+    subtitle_streams: List[Tuple[int, Optional[str]]],
     encoder: str = None,
     generated_subtitles: List[GeneratedSubtitle] = None,
     episode_metadata: EpisodeMetadata = None,
@@ -53,7 +49,7 @@ def build_transcode_command(
         input_path: Input .mkv file path
         output_path: Output .mp4 file path
         video_bitrate_kbps: Target video bitrate in kbps
-        subtitle_streams: List of text subtitle stream indices
+        subtitle_streams: List of tuples (stream_index, language_code) for text subtitles
         encoder: Video encoder to use (auto-detected if None)
         generated_subtitles: List of generated subtitle files from OCR
         episode_metadata: Episode metadata for Apple TV tags
@@ -111,7 +107,7 @@ def build_transcode_command(
     # Map text subtitle streams from source
     subtitle_count = 0
     if subtitle_streams:
-        for sub_idx in subtitle_streams:
+        for sub_idx, sub_lang in subtitle_streams:
             cmd.extend(["-map", f"0:{sub_idx}"])
             subtitle_count += 1
     
@@ -121,9 +117,21 @@ def build_transcode_command(
         subtitle_count += 1
     
     if subtitle_count > 0:
-        # Set codec for all subtitle streams
-        for idx in range(subtitle_count):
-            cmd.extend(["-c:s:{}".format(idx), "mov_text"])
+        # Set codec and language metadata for all subtitle streams
+        stream_idx = 0
+        # Original text subtitles
+        if subtitle_streams:
+            for sub_idx, sub_lang in subtitle_streams:
+                cmd.extend(["-c:s:{}".format(stream_idx), "mov_text"])
+                if sub_lang:
+                    cmd.extend(["-metadata:s:s:{}".format(stream_idx), f"language={sub_lang}"])
+                stream_idx += 1
+        # Generated OCR subtitles
+        for gen_sub in generated_subtitles:
+            cmd.extend(["-c:s:{}".format(stream_idx), "mov_text"])
+            if gen_sub.language:
+                cmd.extend(["-metadata:s:s:{}".format(stream_idx), f"language={gen_sub.language}"])
+            stream_idx += 1
     else:
         cmd.append("-sn")
     
@@ -151,7 +159,7 @@ def build_transcode_command(
 def build_rewrap_command(
     input_path: Path,
     output_path: Path,
-    subtitle_streams: List[int],
+    subtitle_streams: List[Tuple[int, Optional[str]]],
     probe_data: dict = None,
     generated_subtitles: List[GeneratedSubtitle] = None,
     episode_metadata: EpisodeMetadata = None,
@@ -162,7 +170,7 @@ def build_rewrap_command(
     Args:
         input_path: Input .mkv file path
         output_path: Output .mp4 file path
-        subtitle_streams: List of text subtitle stream indices
+        subtitle_streams: List of tuples (stream_index, language_code) for text subtitles
         probe_data: Video probe data to detect codec (optional)
         generated_subtitles: List of generated subtitle files from OCR
         episode_metadata: Episode metadata for Apple TV tags
@@ -206,9 +214,11 @@ def build_rewrap_command(
     # Map text subtitle streams from source
     subtitle_count = 0
     if subtitle_streams:
-        for idx, sub_idx in enumerate(subtitle_streams):
+        for idx, (sub_idx, sub_lang) in enumerate(subtitle_streams):
             cmd.extend(["-map", f"0:{sub_idx}"])
             cmd.extend(["-c:s:{}".format(idx), "copy"])
+            if sub_lang:
+                cmd.extend(["-metadata:s:s:{}".format(idx), f"language={sub_lang}"])
             subtitle_count += 1
     
     # Map generated subtitle files
@@ -216,7 +226,9 @@ def build_rewrap_command(
         output_sub_idx = subtitle_count + idx
         cmd.extend(["-map", f"{idx + 1}:s:0"])
         cmd.extend(["-c:s:{}".format(output_sub_idx), "mov_text"])
-    
+        if gen_sub.language:
+            cmd.extend(["-metadata:s:s:{}".format(output_sub_idx), f"language={gen_sub.language}"])
+
     if subtitle_count == 0 and len(generated_subtitles) == 0:
         cmd.append("-sn")
     
@@ -605,6 +617,7 @@ def transcode_file(
     target_size_mb_per_hour: float = 900.0,
     filename_pattern: str = DEFAULT_FILENAME_PATTERN,
     convert_bitmap_subs: bool = True,
+    target_dir: Optional[Path] = None,
 ) -> bool:
     """
     Transcode a single MKV file to MP4.
@@ -615,11 +628,12 @@ def transcode_file(
         target_size_mb_per_hour: Target file size in MB per hour
         filename_pattern: Pattern for parsing metadata from filename
         convert_bitmap_subs: If True, convert bitmap subtitles to text using OCR
+        target_dir: Optional target directory for output. If None, output is in same directory as input.
     
     Returns:
         True if successful, False otherwise
     """
-    output_path = get_output_path(input_path)
+    output_path = get_output_path(input_path, target_dir)
     
     print(f"Processing: {input_path.name}")
     
@@ -645,11 +659,8 @@ def transcode_file(
                 
                 if bitmap_streams:
                     print(f"Found {len(bitmap_streams)} bitmap subtitle track(s), converting to text...")
-                    tesseract_bin = resolve_tesseract_path()
-                    pytesseract.pytesseract.tesseract_cmd = tesseract_bin
-                    available_languages = list_tesseract_languages(tesseract_bin)
                     generated_subtitles, temp_dir = convert_bitmap_subtitles(
-                        input_path, bitmap_streams, available_languages
+                        input_path, bitmap_streams
                     )
                     if temp_dir:
                         temp_dirs.append(temp_dir)
@@ -698,15 +709,15 @@ def transcode_file(
         returncode, error_output = run_ffmpeg_with_progress(cmd, duration)
         
         if returncode == 0:
-            print(f"✓ Successfully processed {input_path.name}\n")
+            print(f"[OK] Successfully processed {input_path.name}\n")
             return True
         else:
-            print(f"✗ Error processing {input_path.name}:")
+            print(f"[ERROR] Error processing {input_path.name}:")
             print(error_output)
             return False
     
     except Exception as e:
-        print(f"✗ Error processing {input_path.name}: {e}\n")
+        print(f"[ERROR] Error processing {input_path.name}: {e}\n")
         return False
     finally:
         # Clean up temporary directories
@@ -716,31 +727,46 @@ def transcode_file(
 
 
 def transcode_all(
-    directory: Path,
+    source_path: Path,
     rewrap: bool = False,
     target_size_mb_per_hour: float = 900.0,
     filename_pattern: str = DEFAULT_FILENAME_PATTERN,
     convert_bitmap_subs: bool = True,
+    target_dir: Optional[Path] = None,
 ) -> None:
     """
-    Transcode all MKV files in the given directory.
+    Transcode MKV files from source path (file or directory).
     
     Args:
-        directory: Directory containing .mkv files
+        source_path: Path to input .mkv file or directory containing .mkv files
         rewrap: If True, copy streams without transcoding
         target_size_mb_per_hour: Target file size in MB per hour
+        filename_pattern: Pattern for parsing metadata from filename
+        convert_bitmap_subs: If True, convert bitmap subtitles to text using OCR
+        target_dir: Optional target directory for output. If None, output is in same directory as input.
     """
-    mkv_files = find_mkv_files(directory)
-    
-    if not mkv_files:
-        print("No .mkv files found in current directory")
+    # Check if source is a file or directory
+    if source_path.is_file():
+        # Process single file
+        if source_path.suffix.lower() != ".mkv":
+            print(f"Error: {source_path.name} is not an MKV file")
+            return
+        mkv_files = [source_path]
+        print(f"Processing single file: {source_path.name}\n")
+    elif source_path.is_dir():
+        # Process all MKV files in directory
+        mkv_files = find_mkv_files(source_path)
+        if not mkv_files:
+            print(f"No .mkv files found in {source_path}")
+            return
+        print(f"Found {len(mkv_files)} .mkv file(s) in {source_path}\n")
+    else:
+        print(f"Error: {source_path} does not exist or is not a valid file or directory")
         return
-    
-    print(f"Found {len(mkv_files)} .mkv file(s)\n")
     
     success_count = 0
     for mkv_file in mkv_files:
-        if transcode_file(mkv_file, rewrap, target_size_mb_per_hour, filename_pattern, convert_bitmap_subs):
+        if transcode_file(mkv_file, rewrap, target_size_mb_per_hour, filename_pattern, convert_bitmap_subs, target_dir):
             success_count += 1
     
     print(f"\nCompleted: {success_count}/{len(mkv_files)} files processed successfully")
@@ -749,29 +775,99 @@ def transcode_all(
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Convert MKV files to Apple TV compatible MP4 files"
+        description="Convert MKV files to Apple TV compatible MP4 files",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Transcode all MKV files in current directory (default: 900MB/hour target size)
+  transcode
+
+  # Process a specific file
+  transcode --source "video.mkv"
+
+  # Process all MKV files in a specific directory
+  transcode --source "C:\\Videos\\TV Shows"
+
+  # Output to a specific directory
+  transcode --targetDir "C:\\Output"
+
+  # Process specific file and output to specific directory
+  transcode --source "video.mkv" --targetDir "C:\\Output"
+
+  # Rewrap/copy streams without transcoding (faster, preserves original quality)
+  transcode --rewrap
+
+  # Set custom target file size (e.g., 500MB per hour for smaller files)
+  transcode --targetSizePerHour 500
+
+  # Use custom filename pattern for metadata extraction
+  transcode --filename-pattern "<Series Name> - S<season:1-2 digits>E<episode:1-2 digits> - <Episode Name>.mkv"
+
+  # Skip bitmap subtitle conversion (faster, but no OCR subtitles)
+  transcode --no-bitmap-subs
+
+  # Combine options: rewrap with custom target size and output directory
+  transcode --rewrap --targetSizePerHour 1200 --targetDir "C:\\Output"
+
+Features:
+  - Automatic GPU acceleration (NVIDIA > AMD > Intel > CPU fallback)
+  - Converts bitmap subtitles (PGS) to text subtitles using OCR
+  - Preserves text-based subtitles from source
+  - Extracts episode metadata from filename (series name, episode title, season/episode numbers, year)
+  - Apple TV compatible MP4 output with proper metadata tags
+  - Real-time progress display during encoding
+
+Default behavior:
+  - Transcodes video to H.265 (HEVC) with target size of 900MB/hour
+  - Converts all bitmap subtitle tracks to text using OCR
+  - Preserves all text-based subtitle tracks
+  - Outputs .mp4 files in the same directory as input files
+        """
     )
     parser.add_argument(
         "--rewrap",
         action="store_true",
-        help="Rewrap/copy streams without transcoding",
+        help="Rewrap/copy streams without transcoding. Much faster but preserves "
+             "original file size. Use when source video is already HEVC/H.265.",
     )
     parser.add_argument(
         "--targetSizePerHour",
         type=float,
         default=900.0,
-        help="Target file size in MB per hour (default: 900)",
+        metavar="MB",
+        help="Target file size in MB per hour of video. Lower values = smaller files "
+             "but lower quality. Higher values = larger files but better quality. "
+             "Default: 900 MB/hour",
     )
     parser.add_argument(
         "--filename-pattern",
         type=str,
         default=DEFAULT_FILENAME_PATTERN,
-        help=f"Pattern for parsing metadata from filename (default: {DEFAULT_FILENAME_PATTERN})",
+        metavar="PATTERN",
+        help=f"Pattern for parsing episode metadata from filename. Use tokens like "
+             f"<Series Name>, <Episode Name>, <season:2 digits>, <episode:2 digits>, "
+             f"<Year>. Default: {DEFAULT_FILENAME_PATTERN}",
     )
     parser.add_argument(
         "--no-bitmap-subs",
         action="store_true",
-        help="Skip conversion of bitmap subtitles to text",
+        help="Skip conversion of bitmap subtitles (PGS/SUP) to text. Bitmap subtitles "
+             "will be ignored. Use this to speed up processing if you don't need OCR subtitles.",
+    )
+    parser.add_argument(
+        "--source",
+        type=str,
+        metavar="PATH",
+        help="Input file or directory to process. If a file is specified, only that file "
+             "will be processed. If a directory is specified, all .mkv files in that directory "
+             "will be processed. If not specified, processes all .mkv files in the current directory.",
+    )
+    parser.add_argument(
+        "--targetDir",
+        type=str,
+        metavar="PATH",
+        help="Output directory for transcoded files. If not specified, output files are "
+             "created in the same directory as input files.",
     )
     
     return parser.parse_args()
@@ -784,13 +880,30 @@ def main() -> None:
         sys.exit(1)
     
     args = parse_arguments()
-    current_dir = Path.cwd()
+    
+    # Determine source path
+    if args.source:
+        source_path = Path(args.source).resolve()
+        if not source_path.exists():
+            print(f"Error: Source path does not exist: {source_path}")
+            sys.exit(1)
+    else:
+        # Default to current directory
+        source_path = Path.cwd()
+    
+    # Determine target directory
+    target_dir = None
+    if args.targetDir:
+        target_dir = Path(args.targetDir).resolve()
+        # Create target directory if it doesn't exist
+        target_dir.mkdir(parents=True, exist_ok=True)
     
     transcode_all(
-        current_dir,
+        source_path,
         rewrap=args.rewrap,
         target_size_mb_per_hour=args.targetSizePerHour,
         filename_pattern=args.filename_pattern,
         convert_bitmap_subs=not args.no_bitmap_subs,
+        target_dir=target_dir,
     )
 

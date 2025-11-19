@@ -8,7 +8,8 @@ dependencies:
   - pip
   - pip:
     - -e .
-    - pytesseract
-    - pgsrip
+    - easyocr
+    - opencv-python
     - babelfish
+    - pgsrip
 

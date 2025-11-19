@@ -7,9 +7,10 @@ setup(
     packages=find_packages(),
     python_requires=">=3.9",
     install_requires=[
-        "pytesseract",
-        "pgsrip",
+        "easyocr",
+        "opencv-python",
         "babelfish",
+        "pgsrip",
     ],
     entry_points={
         "console_scripts": [

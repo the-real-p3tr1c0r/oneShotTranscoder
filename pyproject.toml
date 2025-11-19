@@ -8,9 +8,10 @@ version = "0.1.0"
 description = "Transcoder project"
 requires-python = ">=3.9"
 dependencies = [
-    "pytesseract",
-    "pgsrip",
+    "easyocr",
+    "opencv-python",
     "babelfish",
+    "pgsrip",
 ]
 
 [project.scripts]

@@ -1,18 +1,18 @@
 """Bitmap subtitle conversion to text using OCR."""
 
+import json
 import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import List, Optional, Tuple
 
-import pytesseract
+import easyocr
 from babelfish import Language as BabelLanguage
-from pgsrip.api import rip as rip_pgs
 from pgsrip.sup import Sup as SupSubtitle
 
-DEFAULT_TESSERACT_LANGUAGE = "eng"
+DEFAULT_EASYOCR_LANGUAGE = "en"
 
 IMAGE_BASED_SUBTITLE_CODECS = {
     "hdmv_pgs_subtitle",
@@ -45,177 +45,218 @@ class GeneratedSubtitle:
     title: Optional[str]
 
 
-ISO639_BIBLIOGRAPHIC_TO_TERMINOLOGICAL = {
-    "alb": "sqi",
-    "arm": "hye",
-    "baq": "eus",
-    "bur": "mya",
-    "chi": "zho",
-    "cze": "ces",
-    "dut": "nld",
-    "fre": "fra",
-    "ger": "deu",
-    "gre": "ell",
-    "ice": "isl",
-    "mac": "mkd",
-    "mao": "mri",
-    "may": "msa",
-    "rum": "ron",
-    "slo": "slk",
-    "tib": "bod",
-    "wel": "cym",
-}
-
-_TESSERACT_LANG_CACHE: Optional[Set[str]] = None
-
-
-def resolve_tesseract_path() -> str:
-    """
-    Locate Tesseract executable.
-    
-    Returns:
-        Path to tesseract executable
-    
-    Raises:
-        RuntimeError: If Tesseract not found
-    """
-    import os
-    
-    override = os.environ.get("TESSERACT_PATH")
-    candidates: List[Path] = []
-    if override:
-        candidates.append(Path(override))
-
-    candidates.append(Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe"))
-
-    which = shutil.which("tesseract")
-    if which:
-        candidates.append(Path(which))
-
-    for candidate in candidates:
-        if candidate.is_file():
-            return str(candidate)
-
-    raise RuntimeError(
-        "Tesseract executable not found. Install it or set TESSERACT_PATH."
-    )
-
-
-def list_tesseract_languages(tesseract_bin: str) -> Set[str]:
-    """
-    List available Tesseract languages.
-    
-    Args:
-        tesseract_bin: Path to tesseract executable
-    
-    Returns:
-        Set of available language codes
-    
-    Raises:
-        RuntimeError: If unable to list languages
-    """
-    global _TESSERACT_LANG_CACHE
-    if _TESSERACT_LANG_CACHE is not None:
-        return _TESSERACT_LANG_CACHE
-
-    try:
-        result = subprocess.run(
-            [tesseract_bin, "--list-langs"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(
-            "Unable to list Tesseract languages; ensure Tesseract is installed correctly."
-        ) from exc
-
-    langs = {
-        line.strip().lower()
-        for line in (result.stdout or "").splitlines()
-        if line.strip() and not line.lower().startswith("list of available languages")
-    }
-    if not langs:
-        raise RuntimeError(
-            "No Tesseract languages detected. Install language packs in "
-            "C:\\Program Files\\Tesseract-OCR\\tessdata and rerun."
-        )
-    _TESSERACT_LANG_CACHE = langs
-    return langs
-
-
-def normalize_language_hint(language_code: Optional[str]) -> Optional[str]:
-    """
-    Normalize language code to Tesseract format.
-    
-    Args:
-        language_code: Language code (ISO 639-1, ISO 639-2, etc.)
-    
-    Returns:
-        Normalized language code or None
-    """
-    if not language_code:
-        return None
-
-    code = language_code.lower()
-    code = ISO639_BIBLIOGRAPHIC_TO_TERMINOLOGICAL.get(code, code)
-
-    for resolver in (BabelLanguage.fromietf, BabelLanguage):
-        try:
-            lang = resolver(code)
-            alpha3 = getattr(lang, "alpha3", None)
-            if alpha3:
-                return alpha3.lower()
-        except Exception:
-            continue
-
-    if len(code) == 3 and code.isalpha():
-        return code
-
-    return None
 
 
 def normalize_language_tag(code: Optional[str]) -> Optional[str]:
     """
-    Normalize language tag for metadata.
+    Normalize language tag for metadata (ISO 639-2).
     
     Args:
         code: Language code
     
     Returns:
-        Normalized language code or None
+        Normalized ISO 639-2 language code or None
     """
     if not code:
         return None
 
+    code_lower = code.lower().strip()
+    
+    # If already 3-letter, check if it's a valid ISO 639-2 code
+    if len(code_lower) == 3 and code_lower.isalpha():
+        # Map common variations to ISO 639-2
+        iso6392_map = {
+            "fre": "fra",  # French bibliographic -> terminological
+            "chi": "zho",  # Chinese bibliographic -> terminological
+            "cze": "ces",  # Czech bibliographic -> terminological
+            "dut": "nld",  # Dutch bibliographic -> terminological
+            "ger": "deu",  # German bibliographic -> terminological
+            "gre": "ell",  # Greek bibliographic -> terminological
+            "ice": "isl",  # Icelandic bibliographic -> terminological
+            "mac": "mkd",  # Macedonian bibliographic -> terminological
+            "rum": "ron",  # Romanian bibliographic -> terminological
+            "slo": "slk",  # Slovak bibliographic -> terminological
+        }
+        
+        # Check if it's a known variation
+        if code_lower in iso6392_map:
+            return iso6392_map[code_lower]
+        
+        # Try to resolve using babelfish to validate
+        try:
+            lang = BabelLanguage(code_lower)
+            # Get ISO 639-2 code (alpha3)
+            iso6392 = getattr(lang, 'alpha3', None)
+            if iso6392 and len(iso6392) == 3:
+                return iso6392.lower()
+            # If babelfish recognizes it but no alpha3, use the code as-is
+            return code_lower
+        except Exception:
+            # If babelfish doesn't recognize it, assume it's already ISO 639-2
+            return code_lower
+
+    # Try to resolve 2-letter codes using babelfish
+    if len(code_lower) == 2 and code_lower.isalpha():
+        try:
+            lang = BabelLanguage.fromietf(code_lower)
+            iso6392 = getattr(lang, 'alpha3', None)
+            if iso6392 and len(iso6392) == 3:
+                return iso6392.lower()
+        except Exception:
+            pass
+    
+    # Try to resolve using babelfish directly
     for resolver in (BabelLanguage.fromietf, BabelLanguage):
         try:
-            return str(resolver(code))
+            lang = resolver(code)
+            iso6392 = getattr(lang, 'alpha3', None)
+            if iso6392 and len(iso6392) == 3:
+                return iso6392.lower()
+        except Exception:
+            continue
+    
+    return None
+
+
+def easyocr_to_iso6392(easyocr_code: str) -> Optional[str]:
+    """
+    Convert EasyOCR language code back to ISO 639-2.
+    
+    Args:
+        easyocr_code: EasyOCR language code (e.g., 'en', 'fr', 'ch_sim')
+    
+    Returns:
+        ISO 639-2 code or None
+    """
+    if not easyocr_code:
+        return None
+    
+    # Map EasyOCR codes to ISO 639-2
+    easyocr_to_iso6392_map = {
+        "en": "eng",
+        "fr": "fra",
+        "es": "spa",
+        "de": "deu",
+        "it": "ita",
+        "ja": "jpn",
+        "ko": "kor",
+        "pt": "por",
+        "ru": "rus",
+        "ch_sim": "zho",
+        "ch_tra": "zho",
+    }
+    
+    return easyocr_to_iso6392_map.get(easyocr_code.lower())
+
+
+def iso6392_to_iso6391(iso6392_code: Optional[str]) -> Optional[str]:
+    """
+    Convert ISO 639-2 code to ISO 639-1 (2-letter) code.
+    Apple TV/macOS TV app prefers ISO 639-1 codes for subtitle language metadata.
+    
+    Args:
+        iso6392_code: ISO 639-2 code (3-letter)
+    
+    Returns:
+        ISO 639-1 code (2-letter) or None
+    """
+    if not iso6392_code:
+        return None
+    
+    iso6392_lower = iso6392_code.lower().strip()
+    
+    # Try using babelfish to convert
+    try:
+        lang = BabelLanguage(iso6392_lower)
+        alpha2 = getattr(lang, 'alpha2', None)
+        if alpha2:
+            return alpha2.lower()
+    except Exception:
+        pass
+    
+    # Fallback mapping for common codes
+    iso6392_to_iso6391_map = {
+        "eng": "en",
+        "fra": "fr",
+        "fre": "fr",  # bibliographic variant
+        "spa": "es",
+        "deu": "de",
+        "ger": "de",  # bibliographic variant
+        "ita": "it",
+        "jpn": "ja",
+        "kor": "ko",
+        "por": "pt",
+        "rus": "ru",
+        "zho": "zh",
+        "chi": "zh",  # bibliographic variant
+        "ces": "cs",
+        "cze": "cs",  # bibliographic variant
+        "nld": "nl",
+        "dut": "nl",  # bibliographic variant
+        "ell": "el",
+        "gre": "el",  # bibliographic variant
+        "isl": "is",
+        "ice": "is",  # bibliographic variant
+        "mkd": "mk",
+        "mac": "mk",  # bibliographic variant
+        "ron": "ro",
+        "rum": "ro",  # bibliographic variant
+        "slk": "sk",
+        "slo": "sk",  # bibliographic variant
+    }
+    
+    return iso6392_to_iso6391_map.get(iso6392_lower)
+
+
+def normalize_language_for_easyocr(language_code: Optional[str]) -> Optional[str]:
+    """
+    Convert language code to EasyOCR format (ISO 639-1).
+    
+    Args:
+        language_code: Language code (ISO 639-1, ISO 639-2, etc.)
+    
+    Returns:
+        ISO 639-1 code for EasyOCR or None
+    """
+    if not language_code:
+        return None
+
+    # Handle common language code variations
+    language_code = language_code.lower().strip()
+    
+    # Map common 3-letter codes to EasyOCR language codes
+    # Note: EasyOCR uses specific codes, not always ISO 639-1
+    lang_map = {
+        "fre": "fr",  # French
+        "fra": "fr",
+        "chi": "ch_sim",  # Chinese (Simplified) - EasyOCR uses ch_sim/ch_tra
+        "zho": "ch_sim",
+        "eng": "en",
+        "spa": "es",
+        "deu": "de",
+        "ger": "de",
+        "ita": "it",
+        "jpn": "ja",
+        "kor": "ko",
+        "por": "pt",
+        "rus": "ru",
+    }
+    
+    if language_code in lang_map:
+        return lang_map[language_code]
+
+    for resolver in (BabelLanguage.fromietf, BabelLanguage):
+        try:
+            lang = resolver(language_code)
+            alpha2 = getattr(lang, "alpha2", None)
+            if alpha2:
+                return alpha2.lower()
         except Exception:
             continue
 
-    return code.lower()
-
-
-def select_tesseract_language(
-    stream_language: Optional[str], available_languages: Set[str]
-) -> Optional[str]:
-    """
-    Select appropriate Tesseract language for subtitle stream.
-    
-    Args:
-        stream_language: Language code from subtitle stream
-        available_languages: Set of available Tesseract languages
-    
-    Returns:
-        Selected language code or None if not available
-    """
-    tess_code = normalize_language_hint(stream_language)
-    if tess_code and tess_code in available_languages:
-        return tess_code
-
-    if not stream_language and DEFAULT_TESSERACT_LANGUAGE in available_languages:
-        return DEFAULT_TESSERACT_LANGUAGE
+    # If already 2-letter, return as-is
+    if len(language_code) == 2 and language_code.isalpha():
+        return language_code.lower()
 
     return None
 
@@ -316,12 +357,133 @@ def extract_subtitle_sup(
     return sup_path
 
 
-def rip_sup_to_srt(sup_path: Path) -> Path:
+def extract_sup_frames(sup_path: Path, output_dir: Path) -> List[Tuple[Path, float, float]]:
     """
-    Convert SUP file to SRT using OCR.
+    Extract frames from SUP file using pgsrip.
     
     Args:
         sup_path: Path to SUP file
+        output_dir: Directory to save extracted frames
+    
+    Returns:
+        List of tuples (frame_path, start_timestamp_seconds, end_timestamp_seconds)
+    """
+    from pgsrip.api import Pgs
+    from pgsrip.options import Options
+    
+    # Read SUP file data
+    with open(sup_path, 'rb') as f:
+        sup_data = f.read()
+    
+    # Create options for pgsrip
+    options = Options()
+    
+    # Create Pgs object to parse the SUP file
+    pgs = Pgs(
+        media_path=str(sup_path),
+        options=options,
+        data_reader=lambda: sup_data,
+        temp_folder=str(output_dir)
+    )
+    
+    # Use Pgs as context manager to decode the SUP file
+    # This populates the items list with PgsSubtitleItem objects
+    import cv2
+    import numpy as np
+    
+    # Collect image data and timing inside context manager
+    items_data = []
+    with pgs as pg:
+        # Check if items exist
+        if not pg.items:
+            raise RuntimeError(f"No PGS items found in SUP file {sup_path.name}")
+        
+        # Collect image data and timing info (don't save files yet)
+        for idx, item in enumerate(pg.items):
+            if item.image:
+                # Get image data
+                img_data = item.image.data
+                
+                # Skip empty images
+                if img_data.size == 0:
+                    continue
+                
+                # Get timestamps
+                start_timestamp = 0.0
+                end_timestamp = 3.0
+                
+                if item.start:
+                    if hasattr(item.start, 'ordinal'):
+                        start_timestamp = item.start.ordinal / 1000.0
+                    elif isinstance(item.start, (int, float)):
+                        start_timestamp = item.start / 90000.0
+                
+                if item.end:
+                    if hasattr(item.end, 'ordinal'):
+                        end_timestamp = item.end.ordinal / 1000.0
+                    elif isinstance(item.end, (int, float)):
+                        end_timestamp = item.end / 90000.0
+                    else:
+                        end_timestamp = start_timestamp + 3.0
+                else:
+                    end_timestamp = start_timestamp + 3.0
+                
+                items_data.append((idx, img_data, start_timestamp, end_timestamp))
+    
+    # Now save files outside the context manager
+    # Ensure directory exists
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    frames_with_timing = []
+    for idx, img_data, start_timestamp, end_timestamp in items_data:
+        # Save image to file
+        frame_path = output_dir / f"frame_{idx:04d}.png"
+        
+        # Convert grayscale to BGR if needed for OpenCV
+        if len(img_data.shape) == 2:
+            # Grayscale image - convert to BGR
+            img_bgr = cv2.cvtColor(img_data, cv2.COLOR_GRAY2BGR)
+        elif len(img_data.shape) == 3 and img_data.shape[2] == 4:
+            # RGBA image - convert to BGR
+            img_bgr = cv2.cvtColor(img_data, cv2.COLOR_RGBA2BGR)
+        elif len(img_data.shape) == 3 and img_data.shape[2] == 3:
+            # Already BGR or RGB - use as-is
+            img_bgr = img_data
+        else:
+            # Unknown format - try to save as-is
+            img_bgr = img_data
+        
+        # Ensure data type is uint8
+        if img_bgr.dtype != np.uint8:
+            img_bgr = img_bgr.astype(np.uint8)
+        
+        # Save using OpenCV - use absolute path
+        abs_frame_path = frame_path.absolute()
+        success = cv2.imwrite(str(abs_frame_path), img_bgr)
+        if not success:
+            raise RuntimeError(f"cv2.imwrite failed for {abs_frame_path}")
+        
+        # Verify file was created
+        if not abs_frame_path.exists():
+            raise RuntimeError(f"Image file was not created: {abs_frame_path}")
+        
+        frames_with_timing.append((abs_frame_path, start_timestamp, end_timestamp))
+    
+    if not frames_with_timing:
+        raise RuntimeError("No frames extracted from SUP file")
+    
+    return frames_with_timing
+
+
+def convert_sup_to_srt_easyocr(
+    sup_path: Path, language_code: Optional[str] = None
+) -> Path:
+    """
+    Convert SUP file to SRT using EasyOCR.
+    
+    Args:
+        sup_path: Path to SUP file
+        language_code: ISO 639-1 language code for EasyOCR (e.g., 'en', 'fr')
     
     Returns:
         Path to generated SRT file
@@ -329,25 +491,91 @@ def rip_sup_to_srt(sup_path: Path) -> Path:
     Raises:
         RuntimeError: If OCR fails
     """
-    count = rip_pgs(SupSubtitle(str(sup_path)))
-    srt_path = sup_path.with_suffix(".srt")
-    if count == 0 or not srt_path.exists():
-        raise RuntimeError(f"OCR failed for {sup_path.name}")
-    return srt_path
+    import cv2
+    
+    temp_dir = sup_path.parent / f"{sup_path.stem}_frames"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        # Extract frames from SUP with timing
+        frames_with_timing = extract_sup_frames(sup_path, temp_dir)
+        if not frames_with_timing:
+            raise RuntimeError(f"No frames extracted from {sup_path.name}")
+        
+        # Verify frames were actually created
+        for frame_path, _, _ in frames_with_timing:
+            if not frame_path.exists():
+                raise RuntimeError(f"Frame file not created: {frame_path}")
+        
+        # Initialize EasyOCR reader
+        # language_code is already in ISO 639-1 format from normalize_language_for_easyocr
+        easyocr_lang = language_code or DEFAULT_EASYOCR_LANGUAGE
+        reader = easyocr.Reader([easyocr_lang], gpu=True, verbose=False)
+        
+        # Process frames and collect text with timing
+        subtitle_entries = []
+        
+        def seconds_to_srt_time(secs: float) -> str:
+            hours = int(secs // 3600)
+            minutes = int((secs % 3600) // 60)
+            seconds = int(secs % 60)
+            milliseconds = int((secs % 1) * 1000)
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
+        
+        for frame_path, start_time, end_time in frames_with_timing:
+            # Read image - use absolute path to avoid path issues
+            img = cv2.imread(str(frame_path.absolute()))
+            if img is None:
+                # Try reading directly from the numpy array if file read fails
+                # This shouldn't happen, but as a fallback
+                continue
+            
+            # OCR the image
+            results = reader.readtext(img)
+            
+            if results:
+                # Combine all detected text from this frame
+                text_lines = [result[1] for result in results if result[2] > 0.5]  # Confidence threshold
+                if text_lines:
+                    text = " ".join(text_lines)
+                    
+                    subtitle_entries.append({
+                        "start": start_time,
+                        "end": end_time,
+                        "text": text,
+                        "start_str": seconds_to_srt_time(start_time),
+                        "end_str": seconds_to_srt_time(end_time),
+                    })
+        
+        # Generate SRT file
+        srt_path = sup_path.with_suffix(".srt")
+        with open(srt_path, "w", encoding="utf-8") as f:
+            for idx, entry in enumerate(subtitle_entries, 1):
+                f.write(f"{idx}\n")
+                f.write(f"{entry['start_str']} --> {entry['end_str']}\n")
+                f.write(f"{entry['text']}\n\n")
+        
+        if not subtitle_entries:
+            raise RuntimeError(f"No text detected in {sup_path.name}")
+        
+        return srt_path
+    
+    finally:
+        # Clean up frames
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def convert_bitmap_subtitles(
     media: Path,
     streams: List[SubtitleStreamInfo],
-    available_languages: Set[str],
 ) -> tuple[List[GeneratedSubtitle], Optional[Path]]:
     """
-    Convert bitmap subtitle streams to text subtitles using OCR.
+    Convert bitmap subtitle streams to text subtitles using EasyOCR.
     
     Args:
         media: Path to media file
         streams: List of bitmap subtitle streams to convert
-        available_languages: Set of available Tesseract languages
     
     Returns:
         Tuple of (list of GeneratedSubtitle, temp directory path)
@@ -359,29 +587,52 @@ def convert_bitmap_subtitles(
     generated: List[GeneratedSubtitle] = []
     try:
         for stream in streams:
-            tess_lang = select_tesseract_language(stream.language, available_languages)
-            if not tess_lang:
-                expected_code = (
-                    normalize_language_hint(stream.language)
-                    or (stream.language or "und")
-                )
+            # Get display name for logging
+            lang_display = stream.language or "unknown"
+            
+            # Convert language to EasyOCR format (ISO 639-1)
+            easyocr_lang = normalize_language_for_easyocr(stream.language)
+            
+            if not easyocr_lang:
                 print(
                     f"Skipping bitmap subtitle track {stream.type_index} "
-                    f"({stream.language or 'und'}) — missing Tesseract language data "
-                    f"(install '{expected_code}.traineddata')."
+                    f"({lang_display}) — unable to determine language for OCR."
                 )
                 continue
-            sup_path = extract_subtitle_sup(media, stream, temp_dir)
-            srt_path = rip_sup_to_srt(sup_path)
-            if sup_path.exists():
-                sup_path.unlink(missing_ok=True)
-            generated.append(
-                GeneratedSubtitle(
-                    path=srt_path,
-                    language=stream.language,
-                    title=stream.title or f"{(stream.language or 'und').upper()} OCR",
+            
+            # Ensure we have ISO 639-2 code for metadata (normalize if needed)
+            # stream.language is already normalized by probe_subtitle_streams, but double-check
+            metadata_lang = normalize_language_tag(stream.language)
+            if not metadata_lang:
+                # Fallback: try to convert EasyOCR lang back to ISO 639-2
+                metadata_lang = easyocr_to_iso6392(easyocr_lang)
+            if not metadata_lang:
+                # Last resort: use original code (might not be ISO 639-2)
+                metadata_lang = stream.language
+            
+            print(f"Converting bitmap subtitle track {stream.type_index} ({lang_display}) to text using OCR...")
+            print(f"  -> Language code for metadata: {metadata_lang}")
+            
+            try:
+                sup_path = extract_subtitle_sup(media, stream, temp_dir)
+                srt_path = convert_sup_to_srt_easyocr(sup_path, easyocr_lang)
+                
+                if sup_path.exists():
+                    sup_path.unlink(missing_ok=True)
+                
+                generated.append(
+                    GeneratedSubtitle(
+                        path=srt_path,
+                        language=metadata_lang,  # ISO 639-2 for metadata
+                        title=stream.title or f"{(metadata_lang or 'und').upper()} OCR",
+                    )
                 )
-            )
+                print(f"  -> Successfully converted {lang_display} subtitle track")
+            except Exception as e:
+                print(
+                    f"Warning: Failed to convert bitmap subtitle track {stream.type_index} ({lang_display}): {e}"
+                )
+                continue
     except Exception:
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise
