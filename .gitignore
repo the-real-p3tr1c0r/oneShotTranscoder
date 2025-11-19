@@ -51,3 +51,15 @@ Thumbs.db
 *.avi
 *.mov
 
+# Image files
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+*.bmp
+*.svg
+*.ico
+*.tiff
+*.tif
+
