@@ -6,6 +6,7 @@ setup(
     description="Transcoder project",
     packages=find_packages(),
     python_requires=">=3.9",
+    license="GPL-3.0-or-later",
     install_requires=[
         "easyocr",
         "opencv-python",

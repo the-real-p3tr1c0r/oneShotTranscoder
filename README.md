@@ -156,7 +156,11 @@ All dependencies are automatically installed via `environment.yml` and `setup.py
 
 ## License
 
-See LICENSE file for details.
+This project is dual-licensed:
+
+- **GPL v3.0**: This software is available under the terms of the GNU General Public License v3.0 (GPL-3.0). See the [LICENSE](LICENSE) file for the full GPL v3.0 license text.
+
+- **Commercial License**: For commercial use that requires proprietary licensing (e.g., integration into proprietary software without GPL obligations), commercial licenses are available upon request. Please contact fishmac13@yahoo.com for commercial licensing inquiries.
 
 ## Contributing
 
