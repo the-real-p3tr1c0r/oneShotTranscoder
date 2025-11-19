@@ -585,19 +585,52 @@ def convert_bitmap_subtitles(
 
     temp_dir = Path(tempfile.mkdtemp(prefix=f"{media.stem}_subs_"))
     generated: List[GeneratedSubtitle] = []
+    import sys
+    import os
+    
+    # Enable ANSI escape sequences on Windows
+    if os.name == 'nt':
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)  # Enable ANSI
+        except Exception:
+            pass  # If it fails, continue anyway
+    
+    # Print all "Converting..." messages upfront, before any processing
+    # This ensures they appear immediately without delays
+    total_streams = len(streams)
+    for idx, stream in enumerate(streams):
+        lang_display = stream.language or "unknown"
+        sys.stdout.write(f"Converting bitmap subtitle track {idx} ({lang_display}) to text using OCR...\n")
+        sys.stdout.flush()
+    
+    # Helper function to update a specific line
+    def update_line(line_index: int, message: str):
+        """Update a specific line (0-indexed from the first Converting message)."""
+        # Calculate how many lines up we need to go
+        # After printing all messages, we're at the start of a new line (total_streams lines down)
+        # To update line_index, we need to go up (total_streams - line_index) lines
+        lines_up = total_streams - line_index
+        if lines_up > 0:
+            sys.stdout.write(f"\033[{lines_up}A")  # Move up
+        sys.stdout.write(f"\r{message}")
+        # Clear to end of line and add newline
+        sys.stdout.write("\033[K\n")  # Clear to end of line, then newline
+        if lines_up > 0:
+            sys.stdout.write(f"\033[{lines_up}B")  # Move back down
+        sys.stdout.flush()
+    
+    # Now process each stream and update the corresponding line with success/failed
     try:
-        for stream in streams:
-            # Get display name for logging
+        for idx, stream in enumerate(streams):
             lang_display = stream.language or "unknown"
             
             # Convert language to EasyOCR format (ISO 639-1)
             easyocr_lang = normalize_language_for_easyocr(stream.language)
             
             if not easyocr_lang:
-                print(
-                    f"Skipping bitmap subtitle track {stream.type_index} "
-                    f"({lang_display}) — unable to determine language for OCR."
-                )
+                update_line(idx, f"Converting bitmap subtitle track {idx} ({lang_display}) to text using OCR... skipped (unable to determine language)")
                 continue
             
             # Ensure we have ISO 639-2 code for metadata (normalize if needed)
@@ -609,9 +642,6 @@ def convert_bitmap_subtitles(
             if not metadata_lang:
                 # Last resort: use original code (might not be ISO 639-2)
                 metadata_lang = stream.language
-            
-            print(f"Converting bitmap subtitle track {stream.type_index} ({lang_display}) to text using OCR...")
-            print(f"  -> Language code for metadata: {metadata_lang}")
             
             try:
                 sup_path = extract_subtitle_sup(media, stream, temp_dir)
@@ -627,11 +657,11 @@ def convert_bitmap_subtitles(
                         title=stream.title or f"{(metadata_lang or 'und').upper()} OCR",
                     )
                 )
-                print(f"  -> Successfully converted {lang_display} subtitle track")
+                # Update the line with success
+                update_line(idx, f"Converting bitmap subtitle track {idx} ({lang_display}) to text using OCR...success")
             except Exception as e:
-                print(
-                    f"Warning: Failed to convert bitmap subtitle track {stream.type_index} ({lang_display}): {e}"
-                )
+                # Update the line with failure
+                update_line(idx, f"Converting bitmap subtitle track {idx} ({lang_display}) to text using OCR...failed: {e}")
                 continue
     except Exception:
         shutil.rmtree(temp_dir, ignore_errors=True)

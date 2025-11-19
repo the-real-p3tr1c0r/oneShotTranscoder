@@ -278,3 +278,85 @@ def get_output_path(input_path: Path, target_dir: Optional[Path] = None) -> Path
         return target_dir / input_path.with_suffix(".mp4").name
     return input_path.with_suffix(".mp4")
 
+
+def find_cover_image(source_dir: Path) -> Optional[Path]:
+    """
+    Find cover image in source directory with priority: cover.* > front.* > alphabetical.
+    
+    Args:
+        source_dir: Directory to search for images
+    
+    Returns:
+        Path to cover image or None if not found
+    """
+    # Supported image formats
+    image_extensions = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
+    
+    # Find all image files
+    image_files = []
+    for ext in image_extensions:
+        image_files.extend(source_dir.glob(f"*{ext}"))
+        image_files.extend(source_dir.glob(f"*{ext.upper()}"))
+    
+    if not image_files:
+        return None
+    
+    # Priority 1: "cover.*"
+    for img in image_files:
+        if img.stem.lower() == "cover":
+            return img
+    
+    # Priority 2: "front.*"
+    for img in image_files:
+        if img.stem.lower() == "front":
+            return img
+    
+    # Priority 3: Alphabetical order (first image)
+    return sorted(image_files)[0]
+
+
+def convert_image_for_apple_tv(image_path: Path, temp_dir: Path) -> Path:
+    """
+    Convert image to JPEG format and resize for Apple TV compatibility.
+    
+    Args:
+        image_path: Path to source image
+        temp_dir: Temporary directory for converted image
+    
+    Returns:
+        Path to converted JPEG image
+    
+    Raises:
+        RuntimeError: If conversion fails
+    """
+    # Ensure temp directory exists
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Output path for converted image
+    output_path = temp_dir / f"{image_path.stem}_cover.jpg"
+    
+    # Use ffmpeg to convert and resize
+    # -vf scale: preserve aspect ratio, max dimension 2000px
+    # -q:v 2: high quality JPEG
+    # Use double quotes for Windows compatibility
+    scale_filter = "scale='min(2000,iw)':'min(2000,ih)':force_original_aspect_ratio=decrease"
+    cmd = [
+        "ffmpeg",
+        "-i", str(image_path),
+        "-vf", scale_filter,
+        "-q:v", "2",
+        "-y",
+        str(output_path),
+    ]
+    
+    try:
+        subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+        return output_path
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Failed to convert image: {e.stderr.decode() if e.stderr else str(e)}") from e
+

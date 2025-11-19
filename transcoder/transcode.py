@@ -24,7 +24,9 @@ from transcoder.subtitles import (
 from transcoder.utils import (
     calculate_target_bitrate,
     check_ffmpeg_available,
+    convert_image_for_apple_tv,
     detect_gpu_encoder,
+    find_cover_image,
     find_mkv_files,
     get_output_path,
     get_text_subtitle_streams,
@@ -41,6 +43,7 @@ def build_transcode_command(
     encoder: str = None,
     generated_subtitles: List[GeneratedSubtitle] = None,
     episode_metadata: EpisodeMetadata = None,
+    cover_image_path: Optional[Path] = None,
 ) -> List[str]:
     """
     Build ffmpeg command for transcoding mode.
@@ -53,6 +56,7 @@ def build_transcode_command(
         encoder: Video encoder to use (auto-detected if None)
         generated_subtitles: List of generated subtitle files from OCR
         episode_metadata: Episode metadata for Apple TV tags
+        cover_image_path: Optional path to cover image to embed as thumbnail
     
     Returns:
         List of command arguments for ffmpeg
@@ -73,14 +77,27 @@ def build_transcode_command(
     for gen_sub in generated_subtitles:
         cmd.extend(["-i", str(gen_sub.path)])
     
+    # Add cover image as input if provided
+    image_input_index = len(generated_subtitles) + 1
+    if cover_image_path:
+        cmd.extend(["-i", str(cover_image_path)])
+    
     cmd.extend([
         "-map",
         "0:v:0",
         "-map",
         "0:a:0",
-        "-c:v",
+    ])
+    
+    # Map cover image as attached picture if provided (before setting codecs)
+    if cover_image_path:
+        cmd.extend(["-map", f"{image_input_index}:v:0"])
+    
+    # Set codec for main video stream explicitly (use :0 to avoid affecting cover image)
+    cmd.extend([
+        "-c:v:0",
         encoder,
-        "-b:v",
+        "-b:v:0",
         f"{int(video_bitrate_kbps)}k",
     ])
     
@@ -93,16 +110,21 @@ def build_transcode_command(
     else:
         cmd.extend(["-preset", "medium"])
     
+    # Add HEVC tag for main video stream only (not cover image)
+    if encoder in ["hevc_nvenc", "hevc_amf", "hevc_qsv", "libx265"]:
+        cmd.extend(["-tag:v:0", "hvc1"])
+    
+    # Set codec for cover image if provided
+    if cover_image_path:
+        cmd.extend(["-c:v:1", "mjpeg"])
+        cmd.extend(["-disposition:v:1", "attached_pic"])
+    
     cmd.extend([
         "-c:a",
         "aac",
         "-b:a",
         "192k",
     ])
-    
-    # Add HEVC tag for Apple TV compatibility
-    if encoder in ["hevc_nvenc", "hevc_amf", "hevc_qsv", "libx265"]:
-        cmd.extend(["-tag:v", "hvc1"])
     
     # Map text subtitle streams from source
     subtitle_count = 0
@@ -163,6 +185,7 @@ def build_rewrap_command(
     probe_data: dict = None,
     generated_subtitles: List[GeneratedSubtitle] = None,
     episode_metadata: EpisodeMetadata = None,
+    cover_image_path: Optional[Path] = None,
 ) -> List[str]:
     """
     Build ffmpeg command for rewrap mode (stream copy).
@@ -174,6 +197,7 @@ def build_rewrap_command(
         probe_data: Video probe data to detect codec (optional)
         generated_subtitles: List of generated subtitle files from OCR
         episode_metadata: Episode metadata for Apple TV tags
+        cover_image_path: Optional path to cover image to embed as thumbnail
     
     Returns:
         List of command arguments for ffmpeg
@@ -191,16 +215,35 @@ def build_rewrap_command(
     for gen_sub in generated_subtitles:
         cmd.extend(["-i", str(gen_sub.path)])
     
+    # Add cover image as input if provided
+    image_input_index = len(generated_subtitles) + 1
+    if cover_image_path:
+        cmd.extend(["-i", str(cover_image_path)])
+    
+    # Map video and audio first
     cmd.extend([
         "-map",
         "0:v:0",
         "-map",
         "0:a:0",
-        "-c:v",
+    ])
+    
+    # Map cover image as attached picture if provided
+    if cover_image_path:
+        cmd.extend(["-map", f"{image_input_index}:v:0"])
+    
+    # Set codecs: video copy, audio copy, image mjpeg
+    cmd.extend([
+        "-c:v:0",
         "copy",
         "-c:a",
         "copy",
     ])
+    
+    # Set codec for cover image if provided
+    if cover_image_path:
+        cmd.extend(["-c:v:1", "mjpeg"])
+        cmd.extend(["-disposition:v:1", "attached_pic"])
     
     # Check if video codec is HEVC and add tag for Apple TV compatibility
     if probe_data and "streams" in probe_data:
@@ -208,7 +251,7 @@ def build_rewrap_command(
             if stream.get("codec_type") == "video":
                 codec_name = stream.get("codec_name", "").lower()
                 if codec_name in ["hevc", "h265"]:
-                    cmd.extend(["-tag:v", "hvc1"])
+                    cmd.extend(["-tag:v:0", "hvc1"])
                 break
     
     # Map text subtitle streams from source
@@ -640,6 +683,7 @@ def transcode_file(
     temp_dirs = []
     generated_subtitles = []
     episode_metadata = None
+    cover_image_path = None
     
     try:
         # Parse metadata from filename
@@ -650,6 +694,21 @@ def transcode_file(
         
         probe_data = probe_video_file(input_path)
         text_subtitle_streams = get_text_subtitle_streams(probe_data)
+        
+        # Find and convert cover image if available
+        cover_image = find_cover_image(input_path.parent)
+        if cover_image:
+            try:
+                # Create temp directory for converted image
+                import tempfile
+                image_temp_dir = Path(tempfile.mkdtemp(prefix=f"{input_path.stem}_cover_"))
+                temp_dirs.append(image_temp_dir)
+                
+                cover_image_path = convert_image_for_apple_tv(cover_image, image_temp_dir)
+                print(f"Found cover image: {cover_image.name}")
+            except Exception as e:
+                print(f"Warning: Could not process cover image: {e}")
+                cover_image_path = None
         
         # Convert bitmap subtitles if requested
         if convert_bitmap_subs:
@@ -672,7 +731,7 @@ def transcode_file(
         if rewrap:
             cmd = build_rewrap_command(
                 input_path, output_path, text_subtitle_streams, probe_data,
-                generated_subtitles, episode_metadata
+                generated_subtitles, episode_metadata, cover_image_path
             )
             print("Mode: Rewrap (stream copy)")
         else:
@@ -689,7 +748,7 @@ def transcode_file(
             }.get(encoder, encoder)
             cmd = build_transcode_command(
                 input_path, output_path, video_bitrate_kbps, text_subtitle_streams,
-                encoder, generated_subtitles, episode_metadata
+                encoder, generated_subtitles, episode_metadata, cover_image_path
             )
             print(f"Mode: Transcode (target: {target_size_mb_per_hour}MB/hour)")
             print(f"Encoder: {encoder_name}")
