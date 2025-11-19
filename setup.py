@@ -12,6 +12,7 @@ setup(
         "babelfish",
         "pgsrip",
         "numpy",
+        "torch",
     ],
     entry_points={
         "console_scripts": [

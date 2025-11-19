@@ -13,6 +13,7 @@ dependencies = [
     "babelfish",
     "pgsrip",
     "numpy",
+    "torch",
 ]
 
 [project.scripts]
