@@ -107,11 +107,13 @@ def build_transcode_command(
         cmd.extend(["-quality", "balanced", "-rc", "vbr_peak"])
     elif encoder == "hevc_qsv":
         cmd.extend(["-preset", "medium", "-global_quality", "23"])
+    elif encoder == "hevc_videotoolbox":
+        cmd.extend(["-quality", "1"])  # 0=realtime, 1=best, 2=better
     else:
         cmd.extend(["-preset", "medium"])
     
     # Add HEVC tag for main video stream only (not cover image)
-    if encoder in ["hevc_nvenc", "hevc_amf", "hevc_qsv", "libx265"]:
+    if encoder in ["hevc_nvenc", "hevc_amf", "hevc_qsv", "hevc_videotoolbox", "libx265"]:
         cmd.extend(["-tag:v:0", "hvc1"])
     
     # Set codec for cover image if provided
@@ -744,6 +746,7 @@ def transcode_file(
                 "hevc_nvenc": "NVIDIA NVENC",
                 "hevc_amf": "AMD AMF",
                 "hevc_qsv": "Intel Quick Sync",
+                "hevc_videotoolbox": "Apple VideoToolbox",
                 "libx265": "CPU (libx265)",
             }.get(encoder, encoder)
             cmd = build_transcode_command(

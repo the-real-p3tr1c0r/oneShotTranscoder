@@ -28,15 +28,16 @@ def check_ffmpeg_available() -> bool:
 
 def detect_gpu_encoder() -> str:
     """
-    Detect available GPU encoder in priority order: NVIDIA → AMD → Intel → CPU.
+    Detect available GPU encoder in priority order: NVIDIA → AMD → Intel → Apple VideoToolbox → CPU.
     
     Returns:
-        Encoder name (hevc_nvenc, hevc_amf, hevc_qsv, or libx265)
+        Encoder name (hevc_nvenc, hevc_amf, hevc_qsv, hevc_videotoolbox, or libx265)
     """
     encoders = [
         ("hevc_nvenc", "NVIDIA"),
         ("hevc_amf", "AMD"),
         ("hevc_qsv", "Intel"),
+        ("hevc_videotoolbox", "Apple"),
     ]
     
     for encoder, vendor in encoders:
