@@ -1,6 +1,6 @@
 """Main transcoding logic for MKV to MP4 conversion.
 
-Copyright (C) 2024 oneShotTranscoder Contributors
+Copyright (C) 2025 oneShotTranscoder Contributors
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
