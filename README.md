@@ -75,7 +75,7 @@ transcode
 
 Transcode a specific file:
 ```bash
-transcode --source "Prison Break (2005) - S01E01 - Pilot.mkv"
+transcode --source "Example Series (2020) - S01E01 - Episode Title.mkv"
 ```
 
 Transcode all files in a directory:
@@ -120,14 +120,14 @@ The tool automatically extracts metadata from filenames using a configurable pat
 <Series Name> (<Year>) - S<season:2 digits>E<episode:2 digits> - <Episode Name> (<video specs>).mkv
 ```
 
-Example: `Prison Break (2005) - S01E01 - Pilot (1080p BluRay x265 Silence).mkv`
+Example: `Example Series (2020) - S01E01 - Episode Title (1080p BluRay x265).mkv`
 
 This extracts:
-- Series Name: "Prison Break"
-- Year: 2005
+- Series Name: "Example Series"
+- Year: 2020
 - Season: 1
 - Episode: 1
-- Episode Title: "Pilot"
+- Episode Title: "Episode Title"
 
 ## Output Format
 
