@@ -80,7 +80,7 @@ def probe_video_file(file_path: Path) -> Dict:
             "-v",
             "error",
             "-show_entries",
-            "stream=index,codec_name,codec_type,codec_long_name,duration",
+            "stream=index,codec_name,codec_type,codec_long_name,duration,r_frame_rate,avg_frame_rate",
             "-show_entries",
             "format=duration",
             "-of",
@@ -114,6 +114,40 @@ def get_video_duration(probe_data: Dict) -> float:
         raise ValueError("Could not determine video duration")
     
     return duration
+
+
+def parse_fps(fps_str: str) -> float:
+    """Parse FPS string (e.g., '30/1' or '29.97') to float."""
+    try:
+        if '/' in fps_str:
+            num, den = fps_str.split('/', 1)
+            return float(num) / float(den)
+        else:
+            return float(fps_str)
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+
+
+def get_video_fps(probe_data: Dict) -> float:
+    """Extract video FPS from probe data."""
+    if "streams" in probe_data:
+        for stream in probe_data["streams"]:
+            if stream.get("codec_type") == "video":
+                # Try avg_frame_rate first (more accurate), then r_frame_rate
+                fps_str = stream.get("avg_frame_rate") or stream.get("r_frame_rate")
+                if fps_str:
+                    fps = parse_fps(fps_str)
+                    if fps > 0:
+                        return fps
+    
+    raise ValueError("Could not determine video FPS")
+
+
+def get_total_frames(probe_data: Dict) -> int:
+    """Calculate total frame count from duration and FPS."""
+    duration = get_video_duration(probe_data)
+    fps = get_video_fps(probe_data)
+    return int(duration * fps)
 
 
 def get_text_subtitle_streams(probe_data: Dict) -> List[Tuple[int, Optional[str]]]:
@@ -275,6 +309,48 @@ def calculate_target_bitrate(
 def find_mkv_files(directory: Path) -> List[Path]:
     """Find all .mkv files in the given directory."""
     return sorted(directory.glob("*.mkv"))
+
+
+def expand_path_pattern(pattern: str) -> List[Path]:
+    """
+    Expand a path pattern with wildcards to matching MKV files.
+    
+    Supports wildcards (* and ?) in the filename. Examples:
+    - "*est.mkv" matches all files ending with "est.mkv"
+    - "test*.mkv" matches all files starting with "test" and ending with ".mkv"
+    - "test?.mkv" matches files like "test1.mkv", "test2.mkv", etc.
+    
+    Args:
+        pattern: Path pattern with optional wildcards (can be absolute or relative)
+    
+    Returns:
+        List of matching .mkv file paths, sorted
+    
+    Raises:
+        ValueError: If no files match the pattern or no .mkv files found
+    """
+    path = Path(pattern)
+    
+    # Determine the directory to search in
+    if path.is_absolute():
+        search_dir = path.parent
+        file_pattern = path.name
+    else:
+        # Relative path - resolve relative to current directory
+        search_dir = Path.cwd() / path.parent
+        file_pattern = path.name
+    
+    # Expand the glob pattern
+    matching_files = list(search_dir.glob(file_pattern))
+    if not matching_files:
+        raise ValueError(f"No files found matching pattern: {pattern}")
+    
+    # Filter to only MKV files
+    mkv_files = [Path(f) for f in matching_files if Path(f).suffix.lower() == '.mkv']
+    if not mkv_files:
+        raise ValueError(f"No .mkv files found matching pattern: {pattern}")
+    
+    return sorted(mkv_files)
 
 
 def get_output_path(input_path: Path, target_dir: Optional[Path] = None) -> Path:

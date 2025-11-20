@@ -75,34 +75,34 @@ transcode
 
 Transcode a specific file:
 ```bash
-transcode --source "Example Series (2020) - S01E01 - Episode Title.mkv"
+transcode "Example Series (2020) - S01E01 - Episode Title.mkv"
 ```
 
 Transcode all files in a directory:
 ```bash
-transcode --source /path/to/videos
+transcode /path/to/videos
 ```
 
 ### Advanced Options
 
 Rewrap mode (copy streams without transcoding):
 ```bash
-transcode --rewrap --source "video.mkv"
+transcode --rewrap "video.mkv"
 ```
 
 Custom target file size:
 ```bash
-transcode --targetSizePerHour 1200 --source "video.mkv"
+transcode --targetSizePerHour 1200 "video.mkv"
 ```
 
 Custom output directory:
 ```bash
-transcode --targetDir /path/to/output --source "video.mkv"
+transcode --targetDir /path/to/output "video.mkv"
 ```
 
 Disable bitmap subtitle conversion:
 ```bash
-transcode --no-convert-subs --source "video.mkv"
+transcode --noBitmapSubs "video.mkv"
 ```
 
 ### Help
