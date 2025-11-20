@@ -16,8 +16,9 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-import json
+import shutil
 import subprocess
+from fractions import Fraction
 from pathlib import Path
 
 from transcoder.constants import (
@@ -32,22 +33,10 @@ from transcoder.language import normalize_language_tag
 
 def check_ffmpeg_available() -> bool:
     """Check if ffmpeg and ffprobe are available."""
-    try:
-        subprocess.run(
-            ["ffmpeg", "-version"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=True,
-        )
-        subprocess.run(
-            ["ffprobe", "-version"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=True,
-        )
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+    return (
+        shutil.which("ffmpeg") is not None and
+        shutil.which("ffprobe") is not None
+    )
 
 
 def detect_gpu_encoder() -> str:
@@ -81,27 +70,32 @@ def detect_gpu_encoder() -> str:
 
 
 def probe_video_file(file_path: Path) -> dict:
-    """Probe video file using ffprobe and return stream information."""
+    """
+    Probe video file using ffprobe and return stream information.
+    
+    Uses subprocess to call ffprobe directly for reliable results.
+    """
+    import json as json_module
+    import subprocess
+    
+    # ffmpeg-python's probe() doesn't handle multiple show_entries well,
+    # so we use subprocess directly for this specific use case
     try:
         cmd = [
             "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "stream=index,codec_name,codec_type,codec_long_name,duration,r_frame_rate,avg_frame_rate",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "json",
+            "-v", "error",
+            "-show_entries", "stream=index,codec_name,codec_type,codec_long_name,duration,r_frame_rate,avg_frame_rate",
+            "-show_entries", "format=duration",
+            "-of", "json",
             str(file_path),
         ]
         result = subprocess.run(
             cmd, capture_output=True, text=True, check=True
         )
-        return json.loads(result.stdout)
+        return json_module.loads(result.stdout)
     except subprocess.CalledProcessError as e:
         raise FFmpegError(f"Failed to probe video file: {e}") from e
-    except json.JSONDecodeError as e:
+    except json_module.JSONDecodeError as e:
         raise FFmpegError(f"Failed to parse probe output: {e}") from e
 
 
@@ -129,11 +123,7 @@ def get_video_duration(probe_data: dict) -> float:
 def parse_fps(fps_str: str) -> float:
     """Parse FPS string (e.g., '30/1' or '29.97') to float."""
     try:
-        if '/' in fps_str:
-            num, den = fps_str.split('/', 1)
-            return float(num) / float(den)
-        else:
-            return float(fps_str)
+        return float(Fraction(fps_str))
     except (ValueError, ZeroDivisionError):
         return 0.0
 
@@ -321,27 +311,27 @@ def find_cover_image(source_dir: Path) -> Path | None:
     # Supported image formats
     image_extensions = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
     
-    # Find all image files
-    image_files = []
-    for ext in image_extensions:
-        image_files.extend(source_dir.glob(f"*{ext}"))
-        image_files.extend(source_dir.glob(f"*{ext.upper()}"))
+    # Find all image files in one pass using pathlib
+    all_images = [
+        p for p in source_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in image_extensions
+    ]
     
-    if not image_files:
+    if not all_images:
         return None
     
-    # Priority 1: "cover.*"
-    for img in image_files:
-        if img.stem.lower() == "cover":
-            return img
+    # Priority 1: "cover.*" using next() with generator
+    cover = next((img for img in all_images if img.stem.lower() == "cover"), None)
+    if cover:
+        return cover
     
     # Priority 2: "front.*"
-    for img in image_files:
-        if img.stem.lower() == "front":
-            return img
+    front = next((img for img in all_images if img.stem.lower() == "front"), None)
+    if front:
+        return front
     
     # Priority 3: Alphabetical order (first image)
-    return sorted(image_files)[0]
+    return sorted(all_images)[0]
 
 
 def convert_image_for_apple_tv(image_path: Path, temp_dir: Path) -> Path:

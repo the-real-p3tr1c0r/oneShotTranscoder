@@ -17,6 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import argparse
+import shlex
 import sys
 import traceback
 from pathlib import Path
@@ -26,6 +27,52 @@ from transcoder.exceptions import TranscoderError
 from transcoder.metadata import DEFAULT_FILENAME_PATTERN
 from transcoder.transcode import transcode_all, transcode_file
 from transcoder.utils import check_ffmpeg_available, expand_path_pattern
+
+
+def _parse_arguments_powershell() -> list[str]:
+    """Fallback argument parsing for PowerShell-specific issues."""
+    fixed_argv = [sys.argv[0]]
+    i = 1
+
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+
+        if arg.startswith("--") and i + 1 < len(sys.argv):
+            value = sys.argv[i + 1]
+
+            split_result = _split_embedded_tail(value)
+
+            if split_result:
+                prefix, extra_tokens = split_result
+                cleaned = _clean_token(prefix)
+                fixed_argv.append(arg)
+                if cleaned:
+                    fixed_argv.append(cleaned)
+                fixed_argv.extend(extra_tokens)
+                i += 2
+                continue
+
+            cleaned_value = _clean_token(value)
+            fixed_argv.append(arg)
+            fixed_argv.append(cleaned_value or value)
+            i += 2
+            continue
+
+        split_result = _split_embedded_tail(arg)
+        if split_result:
+            prefix, extra_tokens = split_result
+            cleaned = _clean_token(prefix)
+            if cleaned:
+                fixed_argv.append(cleaned)
+            fixed_argv.extend(extra_tokens)
+            i += 1
+            continue
+
+        cleaned_arg = _clean_token(arg)
+        fixed_argv.append(cleaned_arg or arg)
+        i += 1
+
+    return fixed_argv
 
 
 def _clean_token(value: str) -> str:
@@ -79,49 +126,24 @@ def _split_embedded_tail(token: str) -> tuple[str, list[str]] | None:
 
 def parse_arguments() -> argparse.Namespace:
     """Parse command line arguments, with special handling for PowerShell quoting issues."""
-    fixed_argv = [sys.argv[0]]
-    i = 1
-
-    while i < len(sys.argv):
-        arg = sys.argv[i]
-
-        if arg.startswith("--") and i + 1 < len(sys.argv):
-            value = sys.argv[i + 1]
-
-            split_result = _split_embedded_tail(value)
-
-            if split_result:
-                prefix, extra_tokens = split_result
-                cleaned = _clean_token(prefix)
-                fixed_argv.append(arg)
-                if cleaned:
-                    fixed_argv.append(cleaned)
-                fixed_argv.extend(extra_tokens)
-                i += 2
-                continue
-
-            cleaned_value = _clean_token(value)
-            fixed_argv.append(arg)
-            fixed_argv.append(cleaned_value or value)
-            i += 2
-            continue
-
-        split_result = _split_embedded_tail(arg)
-        if split_result:
-            prefix, extra_tokens = split_result
-            cleaned = _clean_token(prefix)
-            if cleaned:
-                fixed_argv.append(cleaned)
-            fixed_argv.extend(extra_tokens)
-            i += 1
-            continue
-
-        cleaned_arg = _clean_token(arg)
-        fixed_argv.append(cleaned_arg or arg)
-        i += 1
-
     original_argv = sys.argv
-    sys.argv = fixed_argv
+    
+    # On Unix-like systems, sys.argv is usually already properly parsed
+    # On Windows/PowerShell, we may need custom handling for quote issues
+    # Try using shlex to clean up any malformed arguments first
+    if sys.platform != 'win32':
+        # On Unix-like systems, arguments are usually fine, but clean up if needed
+        # Most of the time, sys.argv is already correct, so we can use it directly
+        pass
+    else:
+        # On Windows, check if we need custom PowerShell handling
+        # Look for signs of PowerShell quote issues (embedded -- in values)
+        needs_custom_parsing = any(
+            ' --' in arg for arg in sys.argv[1:] if not arg.startswith('--')
+        )
+        if needs_custom_parsing:
+            fixed_argv = _parse_arguments_powershell()
+            sys.argv = fixed_argv
     parser = argparse.ArgumentParser(
         description="Convert MKV files to Apple TV compatible MP4 files",
         formatter_class=argparse.RawDescriptionHelpFormatter,

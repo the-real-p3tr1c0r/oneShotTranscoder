@@ -41,7 +41,7 @@ A Python-based transcoding tool that converts MKV video files to Apple TV-compat
 
 ### Prerequisites
 
-- Python 3.9 or higher
+- Python 3.10 or higher
 - ffmpeg (installed via conda or system package manager)
 - Conda (for environment management)
 
@@ -63,6 +63,8 @@ conda activate pcp
 ```bash
 pip install -e .
 ```
+
+**Note:** The installation script automatically detects NVIDIA GPUs and installs GPU-accelerated PyTorch (CUDA 12.1) for faster OCR processing. If no NVIDIA GPU is detected, it installs CPU-only PyTorch. This ensures optimal performance on both GPU-equipped and CPU-only systems.
 
 ## Usage
 
@@ -139,14 +141,15 @@ This extracts:
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.10+
 - ffmpeg (with hardware encoder support for your GPU)
 - EasyOCR (for subtitle OCR)
+- PyTorch (automatically installed with CUDA support if NVIDIA GPU detected, CPU-only otherwise)
 - OpenCV (for image processing)
 - babelfish (for language code normalization)
 - pgsrip (for SUP subtitle parsing)
 
-All dependencies are automatically installed via `environment.yml` and `setup.py`.
+All dependencies are automatically installed via `environment.yml` and `setup.py`. The installation script automatically detects NVIDIA GPUs and installs GPU-accelerated PyTorch for optimal OCR performance.
 
 ## Platform Support
 
