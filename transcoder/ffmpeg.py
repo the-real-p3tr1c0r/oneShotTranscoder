@@ -16,14 +16,32 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+import queue
 import re
 import subprocess
 import threading
 import time
-import queue
 from pathlib import Path
-from typing import List, Optional, Tuple
 
+from transcoder.constants import (
+    AUDIO_CODEC,
+    DEFAULT_AUDIO_BITRATE_KBPS,
+    ENCODER_AMF,
+    ENCODER_CPU,
+    ENCODER_NVENC,
+    ENCODER_QSV,
+    ENCODER_VIDEOTOOLBOX,
+    FFMPEG_GLOBAL_QUALITY_QSV,
+    FFMPEG_LOGLEVEL,
+    FFMPEG_PRESET_MEDIUM,
+    FFMPEG_PRESET_P4,
+    FFMPEG_QUALITY_BALANCED,
+    FFMPEG_QUALITY_BEST,
+    MAX_COVER_IMAGE_DIMENSION,
+    MP4_SUBTITLE_CODEC,
+    VIDEO_TAG_HVC1,
+)
+from transcoder.exceptions import FFmpegError
 from transcoder.metadata import EpisodeMetadata, metadata_to_ffmpeg_args
 from transcoder.subtitles import GeneratedSubtitle
 from transcoder.utils import detect_gpu_encoder
@@ -33,12 +51,12 @@ def build_transcode_command(
     input_path: Path,
     output_path: Path,
     video_bitrate_kbps: float,
-    subtitle_streams: List[Tuple[int, Optional[str]]],
-    encoder: str = None,
-    generated_subtitles: List[GeneratedSubtitle] = None,
-    episode_metadata: EpisodeMetadata = None,
-    cover_image_path: Optional[Path] = None,
-) -> List[str]:
+    subtitle_streams: list[tuple[int, str | None]],
+    encoder: str | None = None,
+    generated_subtitles: list[GeneratedSubtitle] | None = None,
+    episode_metadata: EpisodeMetadata | None = None,
+    cover_image_path: Path | None = None,
+) -> list[str]:
     """
     Build ffmpeg command for transcoding mode.
     
@@ -55,11 +73,8 @@ def build_transcode_command(
     Returns:
         List of command arguments for ffmpeg
     """
-    if encoder is None:
-        encoder = detect_gpu_encoder()
-    
-    if generated_subtitles is None:
-        generated_subtitles = []
+    encoder = encoder or detect_gpu_encoder()
+    generated_subtitles = generated_subtitles or []
     
     cmd = [
         "ffmpeg",
@@ -108,20 +123,20 @@ def build_transcode_command(
         f"{int(video_bitrate_kbps)}k",
     ])
     
-    if encoder == "hevc_nvenc":
-        cmd.extend(["-preset", "p4", "-rc", "vbr"])
-    elif encoder == "hevc_amf":
-        cmd.extend(["-quality", "balanced", "-rc", "vbr_peak"])
-    elif encoder == "hevc_qsv":
-        cmd.extend(["-preset", "medium", "-global_quality", "23"])
-    elif encoder == "hevc_videotoolbox":
-        cmd.extend(["-quality", "1"])  # 0=realtime, 1=best, 2=better
+    if encoder == ENCODER_NVENC:
+        cmd.extend(["-preset", FFMPEG_PRESET_P4, "-rc", "vbr"])
+    elif encoder == ENCODER_AMF:
+        cmd.extend(["-quality", FFMPEG_QUALITY_BALANCED, "-rc", "vbr_peak"])
+    elif encoder == ENCODER_QSV:
+        cmd.extend(["-preset", FFMPEG_PRESET_MEDIUM, "-global_quality", FFMPEG_GLOBAL_QUALITY_QSV])
+    elif encoder == ENCODER_VIDEOTOOLBOX:
+        cmd.extend(["-quality", FFMPEG_QUALITY_BEST])  # 0=realtime, 1=best, 2=better
     else:
-        cmd.extend(["-preset", "medium"])
+        cmd.extend(["-preset", FFMPEG_PRESET_MEDIUM])
     
     # Add HEVC tag for main video stream only (not cover image)
-    if encoder in ["hevc_nvenc", "hevc_amf", "hevc_qsv", "hevc_videotoolbox", "libx265"]:
-        cmd.extend(["-tag:v:0", "hvc1"])
+    if encoder in [ENCODER_NVENC, ENCODER_AMF, ENCODER_QSV, ENCODER_VIDEOTOOLBOX, ENCODER_CPU]:
+        cmd.extend(["-tag:v:0", VIDEO_TAG_HVC1])
     
     # Set codec for cover image if provided
     if cover_image_path:
@@ -130,9 +145,9 @@ def build_transcode_command(
     
     cmd.extend([
         "-c:a",
-        "aac",
+        AUDIO_CODEC,
         "-b:a",
-        "192k",
+        f"{int(DEFAULT_AUDIO_BITRATE_KBPS)}k",
     ])
     
     # Set codec and language metadata for all subtitle streams
@@ -141,13 +156,13 @@ def build_transcode_command(
         # Original text subtitles
         if subtitle_streams:
             for sub_idx, sub_lang in subtitle_streams:
-                cmd.extend(["-c:s:{}".format(stream_idx), "mov_text"])
+                cmd.extend(["-c:s:{}".format(stream_idx), MP4_SUBTITLE_CODEC])
                 if sub_lang:
                     cmd.extend(["-metadata:s:s:{}".format(stream_idx), f"language={sub_lang}"])
                 stream_idx += 1
         # Generated OCR subtitles
         for gen_sub in generated_subtitles:
-            cmd.extend(["-c:s:{}".format(stream_idx), "mov_text"])
+            cmd.extend(["-c:s:{}".format(stream_idx), MP4_SUBTITLE_CODEC])
             if gen_sub.language:
                 cmd.extend(["-metadata:s:s:{}".format(stream_idx), f"language={gen_sub.language}"])
             stream_idx += 1
@@ -178,12 +193,12 @@ def build_transcode_command(
 def build_rewrap_command(
     input_path: Path,
     output_path: Path,
-    subtitle_streams: List[Tuple[int, Optional[str]]],
-    probe_data: dict = None,
-    generated_subtitles: List[GeneratedSubtitle] = None,
-    episode_metadata: EpisodeMetadata = None,
-    cover_image_path: Optional[Path] = None,
-) -> List[str]:
+    subtitle_streams: list[tuple[int, str | None]],
+    probe_data: dict | None = None,
+    generated_subtitles: list[GeneratedSubtitle] | None = None,
+    episode_metadata: EpisodeMetadata | None = None,
+    cover_image_path: Path | None = None,
+) -> list[str]:
     """
     Build ffmpeg command for rewrap mode (stream copy).
     
@@ -199,8 +214,7 @@ def build_rewrap_command(
     Returns:
         List of command arguments for ffmpeg
     """
-    if generated_subtitles is None:
-        generated_subtitles = []
+    generated_subtitles = generated_subtitles or []
     
     # Build subtitle codec map from probe data (used for language metadata)
     subtitle_codec_map = {}
@@ -271,14 +285,14 @@ def build_rewrap_command(
     subtitle_stream_idx = 0
     if subtitle_streams:
         for idx, (sub_idx, sub_lang) in enumerate(subtitle_streams):
-            cmd.extend(["-c:s:{}".format(subtitle_stream_idx), "mov_text"])
+            cmd.extend(["-c:s:{}".format(subtitle_stream_idx), MP4_SUBTITLE_CODEC])
             if sub_lang:
                 cmd.extend(["-metadata:s:s:{}".format(subtitle_stream_idx), f"language={sub_lang}"])
             subtitle_stream_idx += 1
     
     # Set codecs for generated subtitle files
     for idx, gen_sub in enumerate(generated_subtitles):
-        cmd.extend(["-c:s:{}".format(subtitle_stream_idx), "mov_text"])
+        cmd.extend(["-c:s:{}".format(subtitle_stream_idx), MP4_SUBTITLE_CODEC])
         if gen_sub.language:
             cmd.extend(["-metadata:s:s:{}".format(subtitle_stream_idx), f"language={gen_sub.language}"])
         subtitle_stream_idx += 1
@@ -289,7 +303,7 @@ def build_rewrap_command(
             if stream.get("codec_type") == "video":
                 codec_name = stream.get("codec_name", "").lower()
                 if codec_name in ["hevc", "h265"]:
-                    cmd.extend(["-tag:v:0", "hvc1"])
+                    cmd.extend(["-tag:v:0", VIDEO_TAG_HVC1])
                 break
 
     if subtitle_count == 0 and len(generated_subtitles) == 0:
@@ -305,7 +319,7 @@ def build_rewrap_command(
         "-movflags",
         "+faststart",
         "-loglevel",
-        "info",  # Show info messages (for faststart detection) but suppress stats
+        FFMPEG_LOGLEVEL,  # Show info messages (for faststart detection) but suppress stats
         "-nostats",  # Suppress default progress output
         "-progress",
         "pipe:1",  # Parse this for progress display
@@ -316,7 +330,7 @@ def build_rewrap_command(
     return cmd
 
 
-def parse_ffmpeg_progress(line: str) -> dict:
+def parse_ffmpeg_progress(line: str) -> dict[str, int | float | str] | None:
     """
     Parse ffmpeg progress line and extract key metrics.
     Supports both stderr format and progress pipe format.
@@ -382,7 +396,14 @@ def parse_ffmpeg_progress(line: str) -> dict:
     return None
 
 
-def run_ffmpeg_with_progress(cmd: List[str], total_duration: float = None, output_path: Path = None, input_size_bytes: int = None, total_frames: int = None, source_fps: float = None) -> Tuple[int, str]:
+def run_ffmpeg_with_progress(
+    cmd: list[str],
+    total_duration: float | None = None,
+    output_path: Path | None = None,
+    input_size_bytes: int | None = None,
+    total_frames: int | None = None,
+    source_fps: float | None = None,
+) -> tuple[int, str]:
     """
     Run ffmpeg command and display FFmpeg's default progress output.
     

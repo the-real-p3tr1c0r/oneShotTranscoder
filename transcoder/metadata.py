@@ -19,7 +19,9 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Pattern
+from typing import Pattern
+
+from transcoder.exceptions import MetadataError
 
 DEFAULT_FILENAME_PATTERN = "<Series Name> (<Year>) - S<season:2 digits>E<episode:2 digits> - <Episode Name> (<video specs>).mkv"
 
@@ -61,9 +63,9 @@ def build_pattern_regex(pattern: str) -> Pattern[str]:
         Compiled regex pattern
     
     Raises:
-        ValueError: If pattern contains unsupported tokens or is malformed
+        MetadataError: If pattern contains unsupported tokens or is malformed
     """
-    buffer: List[str] = []
+    buffer: list[str] = []
     i = 0
     while i < len(pattern):
         if pattern[i] == "<":
@@ -72,16 +74,19 @@ def build_pattern_regex(pattern: str) -> Pattern[str]:
                 raise ValueError(f"Incomplete token in pattern near: {pattern[i:]}")
             token = pattern[i : end + 1]
             if token not in PATTERN_TOKEN_MAP:
-                raise ValueError(f"Unsupported token '{token}' in filename pattern.")
+                raise MetadataError(f"Unsupported token '{token}' in filename pattern.")
             buffer.append(PATTERN_TOKEN_MAP[token])
             i = end + 1
         else:
             buffer.append(re.escape(pattern[i]))
             i += 1
-    return re.compile("^" + "".join(buffer) + "$", re.IGNORECASE)
+    try:
+        return re.compile("^" + "".join(buffer) + "$", re.IGNORECASE)
+    except re.error as e:
+        raise MetadataError(f"Invalid regex pattern: {e}") from e
 
 
-def parse_episode_metadata(source: Path, regex: Pattern[str]) -> Optional[EpisodeMetadata]:
+def parse_episode_metadata(source: Path, regex: Pattern[str]) -> EpisodeMetadata | None:
     """
     Parse episode metadata from filename using regex pattern.
     
@@ -109,7 +114,7 @@ def parse_episode_metadata(source: Path, regex: Pattern[str]) -> Optional[Episod
         return None
 
 
-def metadata_to_ffmpeg_args(metadata: EpisodeMetadata) -> List[str]:
+def metadata_to_ffmpeg_args(metadata: EpisodeMetadata) -> list[str]:
     """
     Convert episode metadata to ffmpeg metadata arguments for Apple TV.
     

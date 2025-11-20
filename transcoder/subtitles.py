@@ -22,20 +22,20 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 import easyocr
-from babelfish import Language as BabelLanguage
 from pgsrip.sup import Sup as SupSubtitle
 
-DEFAULT_EASYOCR_LANGUAGE = "en"
-
-IMAGE_BASED_SUBTITLE_CODECS = {
-    "hdmv_pgs_subtitle",
-    "dvd_subtitle",
-    "xsub",
-    "pgssub",
-}
+from transcoder.constants import (
+    DEFAULT_EASYOCR_LANGUAGE,
+    IMAGE_BASED_SUBTITLE_CODECS,
+)
+from transcoder.exceptions import SubtitleError
+from transcoder.language import (
+    easyocr_to_iso6392,
+    normalize_language_for_easyocr,
+    normalize_language_tag,
+)
 
 
 @dataclass
@@ -44,8 +44,8 @@ class SubtitleStreamInfo:
     absolute_index: int
     type_index: int
     codec_name: str
-    language: Optional[str]
-    title: Optional[str]
+    language: str | None
+    title: str | None
 
     @property
     def is_image_based(self) -> bool:
@@ -57,227 +57,16 @@ class SubtitleStreamInfo:
 class GeneratedSubtitle:
     """Generated text subtitle from OCR."""
     path: Path
-    language: Optional[str]
-    title: Optional[str]
+    language: str | None
+    title: str | None
 
 
 
 
-def normalize_language_tag(code: Optional[str]) -> Optional[str]:
-    """
-    Normalize language tag for metadata (ISO 639-2).
-    
-    Args:
-        code: Language code
-    
-    Returns:
-        Normalized ISO 639-2 language code or None
-    """
-    if not code:
-        return None
-
-    code_lower = code.lower().strip()
-    
-    # If already 3-letter, check if it's a valid ISO 639-2 code
-    if len(code_lower) == 3 and code_lower.isalpha():
-        # Map common variations to ISO 639-2
-        iso6392_map = {
-            "fre": "fra",  # French bibliographic -> terminological
-            "chi": "zho",  # Chinese bibliographic -> terminological
-            "cze": "ces",  # Czech bibliographic -> terminological
-            "dut": "nld",  # Dutch bibliographic -> terminological
-            "ger": "deu",  # German bibliographic -> terminological
-            "gre": "ell",  # Greek bibliographic -> terminological
-            "ice": "isl",  # Icelandic bibliographic -> terminological
-            "mac": "mkd",  # Macedonian bibliographic -> terminological
-            "rum": "ron",  # Romanian bibliographic -> terminological
-            "slo": "slk",  # Slovak bibliographic -> terminological
-        }
-        
-        # Check if it's a known variation
-        if code_lower in iso6392_map:
-            return iso6392_map[code_lower]
-        
-        # Try to resolve using babelfish to validate
-        try:
-            lang = BabelLanguage(code_lower)
-            # Get ISO 639-2 code (alpha3)
-            iso6392 = getattr(lang, 'alpha3', None)
-            if iso6392 and len(iso6392) == 3:
-                return iso6392.lower()
-            # If babelfish recognizes it but no alpha3, use the code as-is
-            return code_lower
-        except Exception:
-            # If babelfish doesn't recognize it, assume it's already ISO 639-2
-            return code_lower
-
-    # Try to resolve 2-letter codes using babelfish
-    if len(code_lower) == 2 and code_lower.isalpha():
-        try:
-            lang = BabelLanguage.fromietf(code_lower)
-            iso6392 = getattr(lang, 'alpha3', None)
-            if iso6392 and len(iso6392) == 3:
-                return iso6392.lower()
-        except Exception:
-            pass
-    
-    # Try to resolve using babelfish directly
-    for resolver in (BabelLanguage.fromietf, BabelLanguage):
-        try:
-            lang = resolver(code)
-            iso6392 = getattr(lang, 'alpha3', None)
-            if iso6392 and len(iso6392) == 3:
-                return iso6392.lower()
-        except Exception:
-            continue
-    
-    return None
+# Language normalization functions are now imported from transcoder.language
 
 
-def easyocr_to_iso6392(easyocr_code: str) -> Optional[str]:
-    """
-    Convert EasyOCR language code back to ISO 639-2.
-    
-    Args:
-        easyocr_code: EasyOCR language code (e.g., 'en', 'fr', 'ch_sim')
-    
-    Returns:
-        ISO 639-2 code or None
-    """
-    if not easyocr_code:
-        return None
-    
-    # Map EasyOCR codes to ISO 639-2
-    easyocr_to_iso6392_map = {
-        "en": "eng",
-        "fr": "fra",
-        "es": "spa",
-        "de": "deu",
-        "it": "ita",
-        "ja": "jpn",
-        "ko": "kor",
-        "pt": "por",
-        "ru": "rus",
-        "ch_sim": "zho",
-        "ch_tra": "zho",
-    }
-    
-    return easyocr_to_iso6392_map.get(easyocr_code.lower())
-
-
-def iso6392_to_iso6391(iso6392_code: Optional[str]) -> Optional[str]:
-    """
-    Convert ISO 639-2 code to ISO 639-1 (2-letter) code.
-    Apple TV/macOS TV app prefers ISO 639-1 codes for subtitle language metadata.
-    
-    Args:
-        iso6392_code: ISO 639-2 code (3-letter)
-    
-    Returns:
-        ISO 639-1 code (2-letter) or None
-    """
-    if not iso6392_code:
-        return None
-    
-    iso6392_lower = iso6392_code.lower().strip()
-    
-    # Try using babelfish to convert
-    try:
-        lang = BabelLanguage(iso6392_lower)
-        alpha2 = getattr(lang, 'alpha2', None)
-        if alpha2:
-            return alpha2.lower()
-    except Exception:
-        pass
-    
-    # Fallback mapping for common codes
-    iso6392_to_iso6391_map = {
-        "eng": "en",
-        "fra": "fr",
-        "fre": "fr",  # bibliographic variant
-        "spa": "es",
-        "deu": "de",
-        "ger": "de",  # bibliographic variant
-        "ita": "it",
-        "jpn": "ja",
-        "kor": "ko",
-        "por": "pt",
-        "rus": "ru",
-        "zho": "zh",
-        "chi": "zh",  # bibliographic variant
-        "ces": "cs",
-        "cze": "cs",  # bibliographic variant
-        "nld": "nl",
-        "dut": "nl",  # bibliographic variant
-        "ell": "el",
-        "gre": "el",  # bibliographic variant
-        "isl": "is",
-        "ice": "is",  # bibliographic variant
-        "mkd": "mk",
-        "mac": "mk",  # bibliographic variant
-        "ron": "ro",
-        "rum": "ro",  # bibliographic variant
-        "slk": "sk",
-        "slo": "sk",  # bibliographic variant
-    }
-    
-    return iso6392_to_iso6391_map.get(iso6392_lower)
-
-
-def normalize_language_for_easyocr(language_code: Optional[str]) -> Optional[str]:
-    """
-    Convert language code to EasyOCR format (ISO 639-1).
-    
-    Args:
-        language_code: Language code (ISO 639-1, ISO 639-2, etc.)
-    
-    Returns:
-        ISO 639-1 code for EasyOCR or None
-    """
-    if not language_code:
-        return None
-
-    # Handle common language code variations
-    language_code = language_code.lower().strip()
-    
-    # Map common 3-letter codes to EasyOCR language codes
-    # Note: EasyOCR uses specific codes, not always ISO 639-1
-    lang_map = {
-        "fre": "fr",  # French
-        "fra": "fr",
-        "chi": "ch_sim",  # Chinese (Simplified) - EasyOCR uses ch_sim/ch_tra
-        "zho": "ch_sim",
-        "eng": "en",
-        "spa": "es",
-        "deu": "de",
-        "ger": "de",
-        "ita": "it",
-        "jpn": "ja",
-        "kor": "ko",
-        "por": "pt",
-        "rus": "ru",
-    }
-    
-    if language_code in lang_map:
-        return lang_map[language_code]
-
-    for resolver in (BabelLanguage.fromietf, BabelLanguage):
-        try:
-            lang = resolver(language_code)
-            alpha2 = getattr(lang, "alpha2", None)
-            if alpha2:
-                return alpha2.lower()
-        except Exception:
-            continue
-
-    # If already 2-letter, return as-is
-    if len(language_code) == 2 and language_code.isalpha():
-        return language_code.lower()
-
-    return None
-
-
-def probe_subtitle_streams(media: Path) -> List[SubtitleStreamInfo]:
+def probe_subtitle_streams(media: Path) -> list[SubtitleStreamInfo]:
     """
     Probe subtitle streams from media file.
     
@@ -344,10 +133,10 @@ def extract_subtitle_sup(
         Path to extracted SUP file
     
     Raises:
-        RuntimeError: If codec is not supported
+        SubtitleError: If codec is not supported
     """
     if stream.codec_name != "hdmv_pgs_subtitle":
-        raise RuntimeError(
+        raise SubtitleError(
             f"Unsupported image subtitle codec '{stream.codec_name}' for OCR."
         )
 
@@ -373,7 +162,7 @@ def extract_subtitle_sup(
     return sup_path
 
 
-def extract_sup_frames(sup_path: Path, output_dir: Path) -> List[Tuple[Path, float, float]]:
+def extract_sup_frames(sup_path: Path, output_dir: Path) -> list[tuple[Path, float, float]]:
     """
     Extract frames from SUP file using pgsrip.
     
@@ -412,7 +201,7 @@ def extract_sup_frames(sup_path: Path, output_dir: Path) -> List[Tuple[Path, flo
     with pgs as pg:
         # Check if items exist
         if not pg.items:
-            raise RuntimeError(f"No PGS items found in SUP file {sup_path.name}")
+            raise SubtitleError(f"No PGS items found in SUP file {sup_path.name}")
         
         # Collect image data and timing info (don't save files yet)
         for idx, item in enumerate(pg.items):
@@ -477,22 +266,22 @@ def extract_sup_frames(sup_path: Path, output_dir: Path) -> List[Tuple[Path, flo
         abs_frame_path = frame_path.absolute()
         success = cv2.imwrite(str(abs_frame_path), img_bgr)
         if not success:
-            raise RuntimeError(f"cv2.imwrite failed for {abs_frame_path}")
+            raise SubtitleError(f"cv2.imwrite failed for {abs_frame_path}")
         
         # Verify file was created
         if not abs_frame_path.exists():
-            raise RuntimeError(f"Image file was not created: {abs_frame_path}")
+            raise SubtitleError(f"Image file was not created: {abs_frame_path}")
         
         frames_with_timing.append((abs_frame_path, start_timestamp, end_timestamp))
     
     if not frames_with_timing:
-        raise RuntimeError("No frames extracted from SUP file")
+        raise SubtitleError("No frames extracted from SUP file")
     
     return frames_with_timing
 
 
 def convert_sup_to_srt_easyocr(
-    sup_path: Path, language_code: Optional[str] = None
+    sup_path: Path, language_code: str | None = None
 ) -> Path:
     """
     Convert SUP file to SRT using EasyOCR.
@@ -516,12 +305,12 @@ def convert_sup_to_srt_easyocr(
         # Extract frames from SUP with timing
         frames_with_timing = extract_sup_frames(sup_path, temp_dir)
         if not frames_with_timing:
-            raise RuntimeError(f"No frames extracted from {sup_path.name}")
+            raise SubtitleError(f"No frames extracted from {sup_path.name}")
         
         # Verify frames were actually created
         for frame_path, _, _ in frames_with_timing:
             if not frame_path.exists():
-                raise RuntimeError(f"Frame file not created: {frame_path}")
+                raise SubtitleError(f"Frame file not created: {frame_path}")
         
         # Initialize EasyOCR reader
         # language_code is already in ISO 639-1 format from normalize_language_for_easyocr
@@ -572,7 +361,7 @@ def convert_sup_to_srt_easyocr(
                 f.write(f"{entry['text']}\n\n")
         
         if not subtitle_entries:
-            raise RuntimeError(f"No text detected in {sup_path.name}")
+            raise SubtitleError(f"No text detected in {sup_path.name}")
         
         return srt_path
     
@@ -584,8 +373,8 @@ def convert_sup_to_srt_easyocr(
 
 def convert_bitmap_subtitles(
     media: Path,
-    streams: List[SubtitleStreamInfo],
-) -> tuple[List[GeneratedSubtitle], Optional[Path]]:
+    streams: list[SubtitleStreamInfo],
+) -> tuple[list[GeneratedSubtitle], Path | None]:
     """
     Convert bitmap subtitle streams to text subtitles using EasyOCR.
     
@@ -600,7 +389,7 @@ def convert_bitmap_subtitles(
         return [], None
 
     temp_dir = Path(tempfile.mkdtemp(prefix=f"{media.stem}_subs_"))
-    generated: List[GeneratedSubtitle] = []
+    generated: list[GeneratedSubtitle] = []
     import sys
     import os
     

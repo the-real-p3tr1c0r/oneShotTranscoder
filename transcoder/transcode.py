@@ -18,8 +18,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import shutil
 from pathlib import Path
-from typing import List, Optional
 
+from transcoder.constants import DEFAULT_TARGET_SIZE_MB_PER_HOUR
 from transcoder.ffmpeg import (
     build_rewrap_command,
     build_transcode_command,
@@ -58,10 +58,10 @@ from transcoder.utils import (
 def transcode_file(
     input_path: Path,
     rewrap: bool = False,
-    target_size_mb_per_hour: float = 900.0,
+    target_size_mb_per_hour: float = DEFAULT_TARGET_SIZE_MB_PER_HOUR,
     filename_pattern: str = DEFAULT_FILENAME_PATTERN,
     convert_bitmap_subs: bool = True,
-    target_dir: Optional[Path] = None,
+    target_dir: Path | None = None,
 ) -> bool:
     """
     Transcode a single MKV file to MP4.
@@ -212,10 +212,10 @@ def transcode_file(
 def transcode_all(
     source_path: Path,
     rewrap: bool = False,
-    target_size_mb_per_hour: float = 900.0,
+    target_size_mb_per_hour: float = DEFAULT_TARGET_SIZE_MB_PER_HOUR,
     filename_pattern: str = DEFAULT_FILENAME_PATTERN,
     convert_bitmap_subs: bool = True,
-    target_dir: Optional[Path] = None,
+    target_dir: Path | None = None,
 ) -> None:
     """
     Transcode MKV files from source path (file or directory).

@@ -21,6 +21,8 @@ import sys
 import traceback
 from pathlib import Path
 
+from transcoder.constants import DEFAULT_TARGET_SIZE_MB_PER_HOUR
+from transcoder.exceptions import TranscoderError
 from transcoder.metadata import DEFAULT_FILENAME_PATTERN
 from transcoder.transcode import transcode_all, transcode_file
 from transcoder.utils import check_ffmpeg_available, expand_path_pattern
@@ -179,11 +181,11 @@ Default behavior:
     parser.add_argument(
         "--targetSizePerHour",
         type=float,
-        default=900.0,
+        default=DEFAULT_TARGET_SIZE_MB_PER_HOUR,
         metavar="MB",
         help="Target file size in MB per hour of video. Lower values = smaller files "
              "but lower quality. Higher values = larger files but better quality. "
-             "Default: 900 MB/hour",
+             f"Default: {DEFAULT_TARGET_SIZE_MB_PER_HOUR} MB/hour",
     )
     parser.add_argument(
         "--fileNamePattern",
@@ -231,9 +233,10 @@ def main() -> None:
 
     try:
         args = parse_arguments()
-    except Exception as e:
+    except (ValueError, SystemExit) as e:
         print(f"Error during initialization: {e}")
-        traceback.print_exc()
+        if isinstance(e, ValueError):
+            traceback.print_exc()
         sys.exit(1)
     # Determine target directory first (needed for both wildcard and normal processing)
     target_dir = None
@@ -271,7 +274,7 @@ def main() -> None:
                 
                 print(f"\nCompleted: {success_count}/{len(mkv_files)} files processed successfully")
                 return
-            except ValueError as e:
+            except (ValueError, TranscoderError) as e:
                 print(f"Error: {e}")
                 sys.exit(1)
         
@@ -293,9 +296,11 @@ def main() -> None:
             convert_bitmap_subs=not args.noBitmapSubs,
             target_dir=target_dir,
         )
-    except Exception as e:
+    except TranscoderError as e:
         print(f"Error during transcoding: {e}")
-        import traceback
+        sys.exit(1)
+    except Exception as e:
+        print(f"Unexpected error during transcoding: {e}")
         traceback.print_exc()
         sys.exit(1)
 

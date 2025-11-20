@@ -19,7 +19,15 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import json
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+
+from transcoder.constants import (
+    AUDIO_CODEC,
+    DEFAULT_AUDIO_BITRATE_KBPS,
+    IMAGE_BASED_SUBTITLE_CODECS,
+    TEXT_SUBTITLE_CODECS,
+)
+from transcoder.exceptions import FFmpegError
+from transcoder.language import normalize_language_tag
 
 
 def check_ffmpeg_available() -> bool:
@@ -72,7 +80,7 @@ def detect_gpu_encoder() -> str:
     return "libx265"
 
 
-def probe_video_file(file_path: Path) -> Dict:
+def probe_video_file(file_path: Path) -> dict:
     """Probe video file using ffprobe and return stream information."""
     try:
         cmd = [
@@ -91,11 +99,13 @@ def probe_video_file(file_path: Path) -> Dict:
             cmd, capture_output=True, text=True, check=True
         )
         return json.loads(result.stdout)
-    except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
-        raise RuntimeError(f"Failed to probe video file: {e}") from e
+    except subprocess.CalledProcessError as e:
+        raise FFmpegError(f"Failed to probe video file: {e}") from e
+    except json.JSONDecodeError as e:
+        raise FFmpegError(f"Failed to parse probe output: {e}") from e
 
 
-def get_video_duration(probe_data: Dict) -> float:
+def get_video_duration(probe_data: dict) -> float:
     """Extract video duration in seconds from probe data."""
     duration = None
     
@@ -128,7 +138,7 @@ def parse_fps(fps_str: str) -> float:
         return 0.0
 
 
-def get_video_fps(probe_data: Dict) -> float:
+def get_video_fps(probe_data: dict) -> float:
     """Extract video FPS from probe data."""
     if "streams" in probe_data:
         for stream in probe_data["streams"]:
@@ -143,87 +153,21 @@ def get_video_fps(probe_data: Dict) -> float:
     raise ValueError("Could not determine video FPS")
 
 
-def get_total_frames(probe_data: Dict) -> int:
+def get_total_frames(probe_data: dict) -> int:
     """Calculate total frame count from duration and FPS."""
     duration = get_video_duration(probe_data)
     fps = get_video_fps(probe_data)
     return int(duration * fps)
 
 
-def get_text_subtitle_streams(probe_data: Dict) -> List[Tuple[int, Optional[str]]]:
+def get_text_subtitle_streams(probe_data: dict) -> list[tuple[int, str | None]]:
     """
     Identify text-based subtitle stream indices with language information.
     
     Returns:
         List of tuples (stream_index, language_code) where language_code is ISO 639-2
     """
-    from babelfish import Language as BabelLanguage
-    
-    text_subtitle_codecs = {
-        "srt",
-        "ass",
-        "ssa",
-        "vtt",
-        "mov_text",
-        "subrip",
-        "text",
-    }
-    
-    image_subtitle_codecs = {
-        "dvd_subtitle",
-        "hdmv_pgs_subtitle",
-        "pgssub",
-        "dvb_subtitle",
-        "xsub",
-    }
-    
-    def normalize_language_tag(code: Optional[str]) -> Optional[str]:
-        """Normalize language code to ISO 639-2."""
-        if not code:
-            return None
-        
-        code_lower = code.lower().strip()
-        
-        # If already 3-letter, check if it's ISO 639-2
-        if len(code_lower) == 3 and code_lower.isalpha():
-            # Map common variations to ISO 639-2
-            iso6392_map = {
-                "fre": "fra",  # French bibliographic -> terminological
-                "chi": "zho",  # Chinese bibliographic -> terminological
-                "cze": "ces",  # Czech bibliographic -> terminological
-                "dut": "nld",  # Dutch bibliographic -> terminological
-                "ger": "deu",  # German bibliographic -> terminological
-                "gre": "ell",  # Greek bibliographic -> terminological
-                "ice": "isl",  # Icelandic bibliographic -> terminological
-                "mac": "mkd",  # Macedonian bibliographic -> terminological
-                "rum": "ron",  # Romanian bibliographic -> terminological
-                "slo": "slk",  # Slovak bibliographic -> terminological
-            }
-            if code_lower in iso6392_map:
-                return iso6392_map[code_lower]
-            # Try to validate with babelfish
-            try:
-                lang = BabelLanguage(code_lower)
-                iso6392 = getattr(lang, 'alpha3', None)
-                if iso6392 and len(iso6392) == 3:
-                    return iso6392.lower()
-                return code_lower
-            except Exception:
-                return code_lower
-        
-        # Try to resolve using babelfish
-        for resolver in (BabelLanguage.fromietf, BabelLanguage):
-            try:
-                lang = resolver(code)
-                iso6392 = getattr(lang, 'alpha3', None)
-                if iso6392 and len(iso6392) == 3:
-                    return iso6392.lower()
-            except Exception:
-                continue
-        
-        return code_lower
-    
-    text_streams = []
+    text_streams: list[tuple[int, str | None]] = []
     
     if "streams" not in probe_data:
         return text_streams
@@ -235,13 +179,13 @@ def get_text_subtitle_streams(probe_data: Dict) -> List[Tuple[int, Optional[str]
         codec_name = stream.get("codec_name", "").lower()
         is_text_subtitle = False
         
-        if codec_name in text_subtitle_codecs:
+        if codec_name in TEXT_SUBTITLE_CODECS:
             is_text_subtitle = True
-        elif codec_name not in image_subtitle_codecs:
+        elif codec_name not in IMAGE_BASED_SUBTITLE_CODECS:
             codec_long_name = stream.get("codec_long_name", "").lower()
             if any(
                 text_codec in codec_long_name
-                for text_codec in text_subtitle_codecs
+                for text_codec in TEXT_SUBTITLE_CODECS
             ):
                 is_text_subtitle = True
         
@@ -254,17 +198,9 @@ def get_text_subtitle_streams(probe_data: Dict) -> List[Tuple[int, Optional[str]
     return text_streams
 
 
-def get_bitmap_subtitle_streams(probe_data: Dict) -> List[int]:
+def get_bitmap_subtitle_streams(probe_data: dict) -> list[int]:
     """Identify image-based subtitle stream indices."""
-    image_subtitle_codecs = {
-        "dvd_subtitle",
-        "hdmv_pgs_subtitle",
-        "pgssub",
-        "dvb_subtitle",
-        "xsub",
-    }
-    
-    bitmap_streams = []
+    bitmap_streams: list[int] = []
     
     if "streams" not in probe_data:
         return bitmap_streams
@@ -275,7 +211,7 @@ def get_bitmap_subtitle_streams(probe_data: Dict) -> List[int]:
         
         codec_name = stream.get("codec_name", "").lower()
         
-        if codec_name in image_subtitle_codecs:
+        if codec_name in IMAGE_BASED_SUBTITLE_CODECS:
             bitmap_streams.append(stream.get("index", len(bitmap_streams)))
     
     return bitmap_streams
@@ -284,8 +220,8 @@ def get_bitmap_subtitle_streams(probe_data: Dict) -> List[int]:
 def calculate_target_bitrate(
     duration_seconds: float,
     target_size_mb_per_hour: float,
-    audio_bitrate_kbps: float = 192.0,
-) -> Tuple[float, float]:
+    audio_bitrate_kbps: float = DEFAULT_AUDIO_BITRATE_KBPS,
+) -> tuple[float, float]:
     """
     Calculate target video bitrate based on duration and target size.
     
@@ -306,12 +242,12 @@ def calculate_target_bitrate(
     return total_bitrate_kbps, video_bitrate_kbps
 
 
-def find_mkv_files(directory: Path) -> List[Path]:
+def find_mkv_files(directory: Path) -> list[Path]:
     """Find all .mkv files in the given directory."""
     return sorted(directory.glob("*.mkv"))
 
 
-def expand_path_pattern(pattern: str) -> List[Path]:
+def expand_path_pattern(pattern: str) -> list[Path]:
     """
     Expand a path pattern with wildcards to matching MKV files.
     
@@ -353,7 +289,7 @@ def expand_path_pattern(pattern: str) -> List[Path]:
     return sorted(mkv_files)
 
 
-def get_output_path(input_path: Path, target_dir: Optional[Path] = None) -> Path:
+def get_output_path(input_path: Path, target_dir: Path | None = None) -> Path:
     """
     Generate output .mp4 path from input .mkv path.
     
@@ -372,7 +308,7 @@ def get_output_path(input_path: Path, target_dir: Optional[Path] = None) -> Path
     return input_path.with_suffix(".mp4")
 
 
-def find_cover_image(source_dir: Path) -> Optional[Path]:
+def find_cover_image(source_dir: Path) -> Path | None:
     """
     Find cover image in source directory with priority: cover.* > front.* > alphabetical.
     
@@ -451,5 +387,6 @@ def convert_image_for_apple_tv(image_path: Path, temp_dir: Path) -> Path:
         )
         return output_path
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Failed to convert image: {e.stderr.decode() if e.stderr else str(e)}") from e
+        error_msg = e.stderr.decode() if e.stderr else str(e)
+        raise FFmpegError(f"Failed to convert image: {error_msg}") from e
 
