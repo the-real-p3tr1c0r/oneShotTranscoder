@@ -42,7 +42,7 @@ from transcoder.constants import (
     VIDEO_TAG_HVC1,
 )
 from transcoder.exceptions import FFmpegError
-from transcoder.metadata import EpisodeMetadata, metadata_to_ffmpeg_args
+from transcoder.metadata import EpisodeMetadata, MovieMetadata, metadata_to_ffmpeg_args
 from transcoder.subtitles import GeneratedSubtitle
 from transcoder.utils import detect_gpu_encoder
 
@@ -54,7 +54,7 @@ def build_transcode_command(
     subtitle_streams: list[tuple[int, str | None]],
     encoder: str | None = None,
     generated_subtitles: list[GeneratedSubtitle] | None = None,
-    episode_metadata: EpisodeMetadata | None = None,
+    media_metadata: EpisodeMetadata | MovieMetadata | None = None,
     cover_image_path: Path | None = None,
 ) -> list[str]:
     """
@@ -67,7 +67,7 @@ def build_transcode_command(
         subtitle_streams: List of tuples (stream_index, language_code) for text subtitles
         encoder: Video encoder to use (auto-detected if None)
         generated_subtitles: List of generated subtitle files from OCR
-        episode_metadata: Episode metadata for Apple TV tags
+        media_metadata: Metadata for Apple TV tags (movie or TV)
         cover_image_path: Optional path to cover image to embed as thumbnail
     
     Returns:
@@ -170,8 +170,8 @@ def build_transcode_command(
         cmd.append("-sn")
     
     # Add episode metadata if available
-    if episode_metadata:
-        cmd.extend(metadata_to_ffmpeg_args(episode_metadata))
+    if media_metadata:
+        cmd.extend(metadata_to_ffmpeg_args(media_metadata))
     
     cmd.extend([
         "-f",
@@ -196,7 +196,7 @@ def build_rewrap_command(
     subtitle_streams: list[tuple[int, str | None]],
     probe_data: dict | None = None,
     generated_subtitles: list[GeneratedSubtitle] | None = None,
-    episode_metadata: EpisodeMetadata | None = None,
+    media_metadata: EpisodeMetadata | MovieMetadata | None = None,
     cover_image_path: Path | None = None,
 ) -> list[str]:
     """
@@ -208,7 +208,7 @@ def build_rewrap_command(
         subtitle_streams: List of tuples (stream_index, language_code) for text subtitles
         probe_data: Video probe data to detect codec (optional)
         generated_subtitles: List of generated subtitle files from OCR
-        episode_metadata: Episode metadata for Apple TV tags
+        media_metadata: Metadata for Apple TV tags
         cover_image_path: Optional path to cover image to embed as thumbnail
     
     Returns:
@@ -310,8 +310,8 @@ def build_rewrap_command(
         cmd.append("-sn")
     
     # Add episode metadata if available
-    if episode_metadata:
-        cmd.extend(metadata_to_ffmpeg_args(episode_metadata))
+    if media_metadata:
+        cmd.extend(metadata_to_ffmpeg_args(media_metadata))
     
     cmd.extend([
         "-f",

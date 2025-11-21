@@ -28,8 +28,9 @@ from transcoder.ffmpeg import (
 from transcoder.metadata import (
     DEFAULT_FILENAME_PATTERN,
     EpisodeMetadata,
-    build_pattern_regex,
-    parse_episode_metadata,
+    MediaType,
+    MovieMetadata,
+    detect_media_metadata,
 )
 from transcoder.subtitles import (
     GeneratedSubtitle,
@@ -55,11 +56,16 @@ from transcoder.utils import (
 
 
 
+def _format_fallback_title(raw_title: str) -> str:
+    cleaned = raw_title.replace("_", " ").replace(".", " ").strip()
+    return cleaned or raw_title
+
+
 def transcode_file(
     input_path: Path,
     rewrap: bool = False,
     target_size_mb_per_hour: float = DEFAULT_TARGET_SIZE_MB_PER_HOUR,
-    filename_pattern: str = DEFAULT_FILENAME_PATTERN,
+    filename_pattern: str | None = DEFAULT_FILENAME_PATTERN,
     convert_bitmap_subs: bool = True,
     target_dir: Path | None = None,
 ) -> bool:
@@ -70,7 +76,7 @@ def transcode_file(
         input_path: Path to input .mkv file
         rewrap: If True, copy streams without transcoding
         target_size_mb_per_hour: Target file size in MB per hour
-        filename_pattern: Pattern for parsing metadata from filename
+        filename_pattern: Optional manual pattern for parsing metadata from filename
         convert_bitmap_subs: If True, convert bitmap subtitles to text using OCR
         target_dir: Optional target directory for output. If None, output is in same directory as input.
     
@@ -83,15 +89,28 @@ def transcode_file(
     
     temp_dirs = []
     generated_subtitles = []
-    episode_metadata = None
+    media_metadata: EpisodeMetadata | MovieMetadata | None = None
     cover_image_path = None
     
     try:
-        # Parse metadata from filename
-        filename_regex = build_pattern_regex(filename_pattern)
-        episode_metadata = parse_episode_metadata(input_path, filename_regex)
-        if episode_metadata:
-            print(f"Metadata: {episode_metadata.series_name} - {episode_metadata.episode_id} - {episode_metadata.episode_title}")
+        manual_pattern = filename_pattern or None
+        detection = detect_media_metadata(input_path, manual_pattern)
+        if detection:
+            media_metadata = detection.metadata
+            if detection.media_type == MediaType.TV_SHOW and isinstance(media_metadata, EpisodeMetadata):
+                episode_label = media_metadata.episode_id or "S??E??"
+                print(
+                    f"Detected TV Show ({detection.pattern_name}): "
+                    f"{media_metadata.series_name} - {episode_label} - {media_metadata.episode_title}"
+                )
+            elif detection.media_type == MediaType.MOVIE and isinstance(media_metadata, MovieMetadata):
+                year_suffix = f" ({media_metadata.year})" if media_metadata.year else ""
+                print(f"Detected Movie ({detection.pattern_name}): {media_metadata.movie_title}{year_suffix}")
+        if media_metadata is None:
+            print("No typematch for metadata extraction, file name used")
+            fallback_title = _format_fallback_title(input_path.stem)
+            media_metadata = MovieMetadata(movie_title=fallback_title, year=None)
+            print(f"Detected Movie (fallback): {media_metadata.movie_title}")
         
         probe_data = probe_video_file(input_path)
         text_subtitle_streams = get_text_subtitle_streams(probe_data)
@@ -132,7 +151,7 @@ def transcode_file(
         if rewrap:
             cmd = build_rewrap_command(
                 input_path, output_path, text_subtitle_streams, probe_data,
-                generated_subtitles, episode_metadata, cover_image_path
+                generated_subtitles, media_metadata, cover_image_path
             )
             print("Mode: Rewrap (stream copy)")
             if cover_image_path:
@@ -152,7 +171,7 @@ def transcode_file(
             }.get(encoder, encoder)
             cmd = build_transcode_command(
                 input_path, output_path, video_bitrate_kbps, text_subtitle_streams,
-                encoder, generated_subtitles, episode_metadata, cover_image_path
+                encoder, generated_subtitles, media_metadata, cover_image_path
             )
             if cover_image_path:
                 print(f"Embedding cover image: {cover_image_path.name}")
@@ -213,7 +232,7 @@ def transcode_all(
     source_path: Path,
     rewrap: bool = False,
     target_size_mb_per_hour: float = DEFAULT_TARGET_SIZE_MB_PER_HOUR,
-    filename_pattern: str = DEFAULT_FILENAME_PATTERN,
+    filename_pattern: str | None = DEFAULT_FILENAME_PATTERN,
     convert_bitmap_subs: bool = True,
     target_dir: Path | None = None,
 ) -> None:
@@ -224,7 +243,7 @@ def transcode_all(
         source_path: Path to input .mkv file or directory containing .mkv files
         rewrap: If True, copy streams without transcoding
         target_size_mb_per_hour: Target file size in MB per hour
-        filename_pattern: Pattern for parsing metadata from filename
+        filename_pattern: Optional manual pattern for parsing metadata from filename
         convert_bitmap_subs: If True, convert bitmap subtitles to text using OCR
         target_dir: Optional target directory for output. If None, output is in same directory as input.
     """

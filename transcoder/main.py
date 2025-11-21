@@ -214,9 +214,12 @@ Default behavior:
         type=str,
         default=DEFAULT_FILENAME_PATTERN,
         metavar="PATTERN",
-        help=f"Pattern for parsing episode metadata from filename. Use tokens like "
-             f"<Series Name>, <Episode Name>, <season:2 digits>, <episode:2 digits>, "
-             f"<Year>. Default: {DEFAULT_FILENAME_PATTERN}",
+        help=(
+            "Manual filename pattern for metadata extraction. Supports tokens like "
+            "<Series Name>, <Movie Name>, <Episode Name>, <season:2 digits>, "
+            "<episode:2 digits>, <Year>, <Air Date>, <video specs>. "
+            f"Default: {DEFAULT_FILENAME_PATTERN}. Provide an empty string to rely solely on auto-detection."
+        ),
     )
     parser.add_argument(
         "--noBitmapSubs",
@@ -255,11 +258,15 @@ def main() -> None:
 
     try:
         args = parse_arguments()
-    except (ValueError, SystemExit) as e:
+    except ValueError as e:
         print(f"Error during initialization: {e}")
-        if isinstance(e, ValueError):
-            traceback.print_exc()
+        traceback.print_exc()
         sys.exit(1)
+    except SystemExit as e:
+        if getattr(e, "code", None) in (0, None):
+            raise
+        print(f"Error during initialization: {e}")
+        sys.exit(e.code or 1)
     # Determine target directory first (needed for both wildcard and normal processing)
     target_dir = None
     if args.targetDir:

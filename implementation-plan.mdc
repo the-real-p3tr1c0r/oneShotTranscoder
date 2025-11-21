@@ -1,0 +1,45 @@
+# Advanced File Name Pattern Detection – Implementation Plan
+
+## Step 1 – Capture metadata rules and constraints
+- Document the global rules for movie/TV detection, manual overrides, logging expectations, and ffmpeg tagging so future changes stay aligned.
+- **Status:** Done
+- Summary 1: Added `cursor_project_rules/README.md` describing movie vs TV classification, manual pattern priority, and Apple TV metadata requirements.
+- Summary 2: Recorded required tokens, fallback logging message, and module ownership expectations.
+
+## Step 2 – Research industry naming patterns
+- Gather concrete filename examples and conventions from Radarr, Sonarr, Plex, Emby, Jellyfin, Kodi, Infuse, and common scene release styles plus Apple TV preferences.
+- Normalize these into tokenized templates we can support (series, season/episode, movie names, year, edition tags, video specs).
+- **Status:** Done
+- Summary 1: Compiled platform-by-platform formats and regex fragments in `cursor_project_rules/patterns.md` covering the requested services plus scene/Apple TV nuances.
+- Summary 2: Documented the shared tokens (`<Movie Name>`, `<Series Name>`, `<Year>`, `<Season>`, `<Episode>`, `<Air Date>`, `<Quality>`, `<Source>`) for downstream parsers.
+
+## Step 3 – Build shared metadata module
+- Create a new module (e.g., `transcoder/media_patterns.py`) that holds dataclasses for `EpisodeMetadata`, `MovieMetadata`, enumerations for `MediaType`, reusable token regexes, and parsing helpers that try manual then automatic detection.
+- Include detection orchestration that returns structured metadata plus detection provenance for logging.
+- **Status:** Done
+- Summary 1: Added `transcoder/media_patterns.py` with movie/TV dataclasses, manual token parsing (including `<Movie Name>`), and Radarr/Sonarr-style auto-detection helpers.
+- Summary 2: Rewired `transcoder/metadata.py` to rely on the new module, expose detection wrappers, and expand ffmpeg metadata support for both media types.
+
+## Step 4 – Integrate detection into CLI & transcode flow
+- Update `metadata.py`, `transcode.py`, and `main.py` (plus any CLI/config helpers) to call the new detection API, log detected type, and print the fallback message before defaulting to movie classification when no match exists.
+- Ensure user-supplied pattern support remains intact and add a clear field for `<Movie Name>` separate from `<Episode Name>`.
+- **Status:** Done
+- Summary 1: Wired `transcode.py` to use the shared detector, emit console messages for TV vs Movie (with fallback logging), and pass metadata into ffmpeg commands.
+- Summary 2: Expanded CLI help to mention `<Movie Name>` tokens and ensured manual patterns still work while auto-detection covers Radarr/Sonarr/Plex styles.
+
+## Step 5 – Map metadata to ffmpeg arguments
+- Extend ffmpeg metadata mapping so movies apply `title` + `date` while TV keeps the existing Apple TV fields, using the new metadata structures.
+- Verify manual pattern outputs continue to produce correct ffmpeg args.
+- **Status:** Pending
+
+## Step 6 – Add automated coverage
+- Create/extend tests (e.g., `tests/test_metadata.py`) covering Radarr/Sonarr movie names, Plex/Jellyfin TV episodes, fallback behavior, and manual pattern overrides.
+- Include fixtures for the provided sample paths (`G:\\My Drive\\testMovie`, `G:\\My Drive\\testShow`) or mock equivalents.
+- **Status:** Done
+- Summary 1: Added `tests/test_media_patterns.py` with parametric coverage for Radarr/Sonarr/Plex/Kodi-style filenames plus manual pattern override and fallback cases.
+- Summary 2: Ensured detect_metadata returns None for unknown files so the runtime fallback prints “No typematch...” as required.
+
+## Step 7 – Update user-facing docs & config
+- Refresh `README.md`, `config.py` comments, and any CLI help text to describe the new detection capabilities, supported tokens, and fallback behavior.
+- Mention how to supply manual patterns and what metadata is printed to the console.
+- **Status:** Pending
