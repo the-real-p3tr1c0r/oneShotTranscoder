@@ -62,6 +62,33 @@ ENCODER_QSV = "hevc_qsv"
 ENCODER_VIDEOTOOLBOX = "hevc_videotoolbox"
 ENCODER_CPU = "libx265"
 
+# Supported input video container formats
+SUPPORTED_VIDEO_FORMATS = {
+    ".mkv",   # Matroska
+    ".mp4",   # MPEG-4
+    ".m4v",   # MPEG-4 Video
+    ".m4a",   # MPEG-4 Audio (can contain video)
+    ".avi",   # Audio Video Interleave
+    ".mov",   # QuickTime
+    ".qt",    # QuickTime
+    ".webm",  # WebM
+    ".flv",   # Flash Video
+    ".ts",    # MPEG Transport Stream
+    ".mts",   # MPEG Transport Stream
+    ".m2ts",  # Blu-ray Transport Stream
+    ".ogv",   # Ogg Video
+    ".ogg",   # Ogg (can contain video)
+    ".3gp",   # 3GPP
+    ".3g2",   # 3GPP2
+    ".asf",   # Advanced Systems Format
+    ".wmv",   # Windows Media Video
+    ".vob",   # DVD Video Object
+    ".mpg",   # MPEG-1/2
+    ".mpeg",  # MPEG-1/2
+    ".divx",  # DivX
+    ".xvid",  # Xvid
+}
+
 # Default values
 DEFAULT_TARGET_SIZE_MB_PER_HOUR = 900.0
 DEFAULT_EASYOCR_LANGUAGE = "en"

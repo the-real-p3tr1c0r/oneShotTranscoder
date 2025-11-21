@@ -19,7 +19,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import shutil
 from pathlib import Path
 
-from transcoder.constants import DEFAULT_TARGET_SIZE_MB_PER_HOUR
+from transcoder.constants import DEFAULT_TARGET_SIZE_MB_PER_HOUR, SUPPORTED_VIDEO_FORMATS
 from transcoder.ffmpeg import (
     build_rewrap_command,
     build_transcode_command,
@@ -44,7 +44,7 @@ from transcoder.utils import (
     detect_gpu_encoder,
     expand_path_pattern,
     find_cover_image,
-    find_mkv_files,
+    find_video_files,
     get_output_path,
     get_text_subtitle_streams,
     get_total_frames,
@@ -68,22 +68,26 @@ def transcode_file(
     filename_pattern: str | None = DEFAULT_FILENAME_PATTERN,
     convert_bitmap_subs: bool = True,
     target_dir: Path | None = None,
+    media_type_override: str | None = None,
+    overwrite: bool = False,
 ) -> bool:
     """
-    Transcode a single MKV file to MP4.
+    Transcode a single video file to MP4.
     
     Args:
-        input_path: Path to input .mkv file
+        input_path: Path to input video file
         rewrap: If True, copy streams without transcoding
         target_size_mb_per_hour: Target file size in MB per hour
         filename_pattern: Optional manual pattern for parsing metadata from filename
         convert_bitmap_subs: If True, convert bitmap subtitles to text using OCR
         target_dir: Optional target directory for output. If None, output is in same directory as input.
+        media_type_override: Optional type override ("show" or "movie") to force type detection
+        overwrite: If True, overwrite existing output files. If False, add incremental suffix to avoid overwriting.
     
     Returns:
         True if successful, False otherwise
     """
-    output_path = get_output_path(input_path, target_dir)
+    output_path = get_output_path(input_path, target_dir, overwrite)
     
     print(f"Processing: {input_path.name}")
     
@@ -94,7 +98,7 @@ def transcode_file(
     
     try:
         manual_pattern = filename_pattern or None
-        detection = detect_media_metadata(input_path, manual_pattern)
+        detection = detect_media_metadata(input_path, manual_pattern, media_type_override)
         if detection:
             media_metadata = detection.metadata
             if detection.media_type == MediaType.TV_SHOW and isinstance(media_metadata, EpisodeMetadata):
@@ -235,43 +239,48 @@ def transcode_all(
     filename_pattern: str | None = DEFAULT_FILENAME_PATTERN,
     convert_bitmap_subs: bool = True,
     target_dir: Path | None = None,
+    media_type_override: str | None = None,
+    overwrite: bool = False,
 ) -> None:
     """
-    Transcode MKV files from source path (file or directory).
+    Transcode video files from source path (file or directory).
     
     Args:
-        source_path: Path to input .mkv file or directory containing .mkv files
+        source_path: Path to input video file or directory containing video files
         rewrap: If True, copy streams without transcoding
         target_size_mb_per_hour: Target file size in MB per hour
         filename_pattern: Optional manual pattern for parsing metadata from filename
         convert_bitmap_subs: If True, convert bitmap subtitles to text using OCR
         target_dir: Optional target directory for output. If None, output is in same directory as input.
+        media_type_override: Optional type override ("show" or "movie") to force type detection
+        overwrite: If True, overwrite existing output files. If False, add incremental suffix to avoid overwriting.
     """
     # Check if source is a file or directory
     if source_path.is_file():
         # Process single file
-        if source_path.suffix.lower() != ".mkv":
-            print(f"Error: {source_path.name} is not an MKV file")
+        if source_path.suffix.lower() not in SUPPORTED_VIDEO_FORMATS:
+            supported_exts = ", ".join(sorted(SUPPORTED_VIDEO_FORMATS))
+            print(f"Error: {source_path.name} is not a supported video format. Supported formats: {supported_exts}")
             return
-        mkv_files = [source_path]
+        video_files = [source_path]
         print(f"Processing single file: {source_path.name}\n")
     elif source_path.is_dir():
-        # Process all MKV files in directory
-        mkv_files = find_mkv_files(source_path)
-        if not mkv_files:
-            print(f"No .mkv files found in {source_path}")
+        # Process all video files in directory
+        video_files = find_video_files(source_path)
+        if not video_files:
+            print(f"No supported video files found in {source_path}")
             return
-        print(f"Found {len(mkv_files)} .mkv file(s) in {source_path}\n")
+        print(f"Found {len(video_files)} video file(s) in {source_path}\n")
     else:
         print(f"Error: {source_path} does not exist or is not a valid file or directory")
         return
     
     success_count = 0
-    for mkv_file in mkv_files:
-        if transcode_file(mkv_file, rewrap, target_size_mb_per_hour, filename_pattern, convert_bitmap_subs, target_dir):
+    for video_file in video_files:
+        if transcode_file(video_file, rewrap, target_size_mb_per_hour, filename_pattern, convert_bitmap_subs, target_dir, media_type_override, overwrite):
             success_count += 1
     
-    print(f"\nCompleted: {success_count}/{len(mkv_files)} files processed successfully")
+    print(f"\nCompleted: {success_count}/{len(video_files)} files processed successfully")
 
 
 

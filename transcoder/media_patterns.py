@@ -189,12 +189,82 @@ def match_manual_pattern(source: Path, regex: Pattern[str]) -> MetadataDetection
     )
 
 
-def detect_metadata(source: Path, manual_pattern: str | None = None) -> MetadataDetection | None:
+def detect_metadata(source: Path, manual_pattern: str | None = None, media_type_override: str | None = None) -> MetadataDetection | None:
     if manual_pattern:
         custom_regex = build_pattern_regex(manual_pattern)
         manual_detection = match_manual_pattern(source, custom_regex)
         if manual_detection:
+            # If type override is specified, enforce it
+            if media_type_override:
+                override_type = MediaType.TV_SHOW if media_type_override == "show" else MediaType.MOVIE
+                if manual_detection.media_type != override_type:
+                    # Force the override type, but keep the metadata
+                    manual_detection.media_type = override_type
+                    # If forcing TV show but we have movie metadata, create fallback episode metadata
+                    if override_type == MediaType.TV_SHOW and isinstance(manual_detection.metadata, MovieMetadata):
+                        manual_detection.metadata = EpisodeMetadata(
+                            series_name=manual_detection.metadata.movie_title,
+                            episode_title=manual_detection.metadata.movie_title,
+                            year=manual_detection.metadata.year,
+                            season_number=None,
+                            episode_number=None,
+                        )
+                    # If forcing movie but we have episode metadata, create fallback movie metadata
+                    elif override_type == MediaType.MOVIE and isinstance(manual_detection.metadata, EpisodeMetadata):
+                        manual_detection.metadata = MovieMetadata(
+                            movie_title=manual_detection.metadata.series_name,
+                            year=manual_detection.metadata.year,
+                        )
             return manual_detection
+    
+    # If type override is specified, force detection to that type
+    if media_type_override:
+        override_type = MediaType.TV_SHOW if media_type_override == "show" else MediaType.MOVIE
+        if override_type == MediaType.TV_SHOW:
+            episode_detection = _detect_tv_metadata(source.stem)
+            if episode_detection:
+                return MetadataDetection(
+                    media_type=MediaType.TV_SHOW,
+                    metadata=episode_detection,
+                    pattern_name=episode_detection.pattern_name or "auto-tv",
+                    matched=True,
+                    is_manual=False,
+                )
+            # If TV detection failed but override is show, create fallback
+            fallback_title = _clean_component(source.stem)
+            return MetadataDetection(
+                media_type=MediaType.TV_SHOW,
+                metadata=EpisodeMetadata(
+                    series_name=fallback_title,
+                    episode_title=fallback_title,
+                    year=None,
+                    season_number=None,
+                    episode_number=None,
+                ),
+                pattern_name="override-show",
+                matched=False,
+                is_manual=True,
+            )
+        else:  # override_type == MediaType.MOVIE
+            movie_detection = _detect_movie_metadata(source.stem)
+            if movie_detection:
+                return MetadataDetection(
+                    media_type=MediaType.MOVIE,
+                    metadata=movie_detection,
+                    pattern_name=movie_detection.pattern_name or "auto-movie",
+                    matched=True,
+                    is_manual=False,
+                )
+            # If movie detection failed but override is movie, create fallback
+            fallback_title = _clean_component(source.stem)
+            return MetadataDetection(
+                media_type=MediaType.MOVIE,
+                metadata=MovieMetadata(movie_title=fallback_title, year=None),
+                pattern_name="override-movie",
+                matched=False,
+                is_manual=True,
+            )
+    
     auto_detection = auto_detect_metadata(source)
     return auto_detection
 

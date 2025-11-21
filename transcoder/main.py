@@ -145,17 +145,19 @@ def parse_arguments() -> argparse.Namespace:
             fixed_argv = _parse_arguments_powershell()
             sys.argv = fixed_argv
     parser = argparse.ArgumentParser(
-        description="Convert MKV files to Apple TV compatible MP4 files",
+        description="Convert video files to Apple TV compatible MP4 files",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Transcode all MKV files in current directory (default: 900MB/hour target size)
+  # Transcode all video files in current directory (default: 900MB/hour target size)
   transcode
 
   # Process a specific file
   transcode "video.mkv"
+  transcode "video.mp4"
+  transcode "video.avi"
 
-  # Process all MKV files in a specific directory
+  # Process all video files in a specific directory
   transcode "C:\\Videos\\TV Shows"
 
   # Output to a specific directory
@@ -178,6 +180,10 @@ Examples:
 
   # Combine options: rewrap with custom target size and output directory
   transcode --rewrap --targetSizePerHour 1200 --targetDir "C:\\Output"
+
+Supported Input Formats:
+  MKV, MP4, M4V, M4A, AVI, MOV, QT, WebM, FLV, TS, MTS, M2TS, OGV, OGG,
+  3GP, 3G2, ASF, WMV, VOB, MPG, MPEG, DivX, Xvid
 
 Features:
   - Automatic GPU acceleration (NVIDIA > AMD > Intel > CPU fallback)
@@ -233,8 +239,8 @@ Default behavior:
         nargs="?",
         metavar="PATH",
         help="Input file or directory to process. If a file is specified, only that file "
-             "will be processed. If a directory is specified, all .mkv files in that directory "
-             "will be processed. If not specified, processes all .mkv files in the current directory.",
+             "will be processed. If a directory is specified, all supported video files in that directory "
+             "will be processed. If not specified, processes all supported video files in the current directory.",
     )
     parser.add_argument(
         "--targetDir",
@@ -242,6 +248,20 @@ Default behavior:
         metavar="PATH",
         help="Output directory for transcoded files. If not specified, output files are "
              "created in the same directory as input files.",
+    )
+    parser.add_argument(
+        "--type",
+        type=str,
+        choices=["show", "movie"],
+        metavar="TYPE",
+        help="Override automatic type detection. Use 'show' to force TV show detection or "
+             "'movie' to force movie detection. If not specified, type is auto-detected from filename.",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing output files. If not specified, output files with existing names "
+             "will have an incremental suffix added (e.g., video_1.mp4, video_2.mp4) to avoid overwriting.",
     )
     
     try:
@@ -285,23 +305,25 @@ def main() -> None:
         if '*' in source_str or '?' in source_str:
             try:
                 # Expand glob pattern using utility function
-                mkv_files = expand_path_pattern(source_str)
+                video_files = expand_path_pattern(source_str)
                 
                 # Process matched files directly
-                print(f"Found {len(mkv_files)} .mkv file(s) matching pattern: {source_str}\n")
+                print(f"Found {len(video_files)} video file(s) matching pattern: {source_str}\n")
                 success_count = 0
-                for mkv_file in mkv_files:
+                for video_file in video_files:
                     if transcode_file(
-                        mkv_file,
+                        video_file,
                         rewrap=args.rewrap,
                         target_size_mb_per_hour=args.targetSizePerHour,
                         filename_pattern=args.fileNamePattern,
                         convert_bitmap_subs=not args.noBitmapSubs,
                         target_dir=target_dir,
+                        media_type_override=args.type,
+                        overwrite=args.overwrite,
                     ):
                         success_count += 1
                 
-                print(f"\nCompleted: {success_count}/{len(mkv_files)} files processed successfully")
+                print(f"\nCompleted: {success_count}/{len(video_files)} files processed successfully")
                 return
             except (ValueError, TranscoderError) as e:
                 print(f"Error: {e}")
@@ -324,6 +346,8 @@ def main() -> None:
             filename_pattern=args.fileNamePattern,
             convert_bitmap_subs=not args.noBitmapSubs,
             target_dir=target_dir,
+            media_type_override=args.type,
+            overwrite=args.overwrite,
         )
     except TranscoderError as e:
         print(f"Error during transcoding: {e}")

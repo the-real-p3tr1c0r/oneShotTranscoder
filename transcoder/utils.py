@@ -25,6 +25,7 @@ from transcoder.constants import (
     AUDIO_CODEC,
     DEFAULT_AUDIO_BITRATE_KBPS,
     IMAGE_BASED_SUBTITLE_CODECS,
+    SUPPORTED_VIDEO_FORMATS,
     TEXT_SUBTITLE_CODECS,
 )
 from transcoder.exceptions import FFmpegError
@@ -232,28 +233,31 @@ def calculate_target_bitrate(
     return total_bitrate_kbps, video_bitrate_kbps
 
 
-def find_mkv_files(directory: Path) -> list[Path]:
-    """Find all .mkv files in the given directory."""
-    return sorted(directory.glob("*.mkv"))
+def find_video_files(directory: Path) -> list[Path]:
+    """Find all supported video files in the given directory."""
+    video_files = []
+    for ext in SUPPORTED_VIDEO_FORMATS:
+        video_files.extend(directory.glob(f"*{ext}"))
+    return sorted(video_files)
 
 
 def expand_path_pattern(pattern: str) -> list[Path]:
     """
-    Expand a path pattern with wildcards to matching MKV files.
+    Expand a path pattern with wildcards to matching video files.
     
     Supports wildcards (* and ?) in the filename. Examples:
     - "*est.mkv" matches all files ending with "est.mkv"
-    - "test*.mkv" matches all files starting with "test" and ending with ".mkv"
+    - "test*.mp4" matches all files starting with "test" and ending with ".mp4"
     - "test?.mkv" matches files like "test1.mkv", "test2.mkv", etc.
     
     Args:
         pattern: Path pattern with optional wildcards (can be absolute or relative)
     
     Returns:
-        List of matching .mkv file paths, sorted
+        List of matching video file paths, sorted
     
     Raises:
-        ValueError: If no files match the pattern or no .mkv files found
+        ValueError: If no files match the pattern or no supported video files found
     """
     path = Path(pattern)
     
@@ -271,21 +275,22 @@ def expand_path_pattern(pattern: str) -> list[Path]:
     if not matching_files:
         raise ValueError(f"No files found matching pattern: {pattern}")
     
-    # Filter to only MKV files
-    mkv_files = [Path(f) for f in matching_files if Path(f).suffix.lower() == '.mkv']
-    if not mkv_files:
-        raise ValueError(f"No .mkv files found matching pattern: {pattern}")
+    # Filter to only supported video formats
+    video_files = [Path(f) for f in matching_files if Path(f).suffix.lower() in SUPPORTED_VIDEO_FORMATS]
+    if not video_files:
+        raise ValueError(f"No supported video files found matching pattern: {pattern}")
     
-    return sorted(mkv_files)
+    return sorted(video_files)
 
 
-def get_output_path(input_path: Path, target_dir: Path | None = None) -> Path:
+def get_output_path(input_path: Path, target_dir: Path | None = None, overwrite: bool = False) -> Path:
     """
-    Generate output .mp4 path from input .mkv path.
+    Generate output .mp4 path from input video file path.
     
     Args:
-        input_path: Path to input .mkv file
+        input_path: Path to input video file
         target_dir: Optional target directory for output. If None, output is in same directory as input.
+        overwrite: If True, allow overwriting existing files. If False, add incremental suffix to avoid overwriting.
     
     Returns:
         Path to output .mp4 file
@@ -294,8 +299,30 @@ def get_output_path(input_path: Path, target_dir: Path | None = None) -> Path:
         # Ensure target directory exists
         target_dir.mkdir(parents=True, exist_ok=True)
         # Use same filename but with .mp4 extension
-        return target_dir / input_path.with_suffix(".mp4").name
-    return input_path.with_suffix(".mp4")
+        base_path = target_dir / input_path.with_suffix(".mp4").name
+    else:
+        base_path = input_path.with_suffix(".mp4")
+    
+    # If overwrite is enabled, return the path as-is
+    if overwrite:
+        return base_path
+    
+    # If file doesn't exist, return the path as-is
+    if not base_path.exists():
+        return base_path
+    
+    # File exists, need to find a non-existing name by incrementing suffix
+    stem = base_path.stem
+    suffix = base_path.suffix
+    parent = base_path.parent
+    counter = 1
+    
+    while True:
+        new_name = f"{stem}_{counter}{suffix}"
+        new_path = parent / new_name
+        if not new_path.exists():
+            return new_path
+        counter += 1
 
 
 def find_cover_image(source_dir: Path) -> Path | None:

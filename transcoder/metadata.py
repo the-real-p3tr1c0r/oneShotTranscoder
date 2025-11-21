@@ -30,8 +30,8 @@ def parse_episode_metadata(source: Path, regex: Pattern[str]) -> EpisodeMetadata
     return episode
 
 
-def detect_media_metadata(source: Path, filename_pattern: str | None = None) -> MetadataDetection | None:
-    return detect_metadata(source, filename_pattern)
+def detect_media_metadata(source: Path, filename_pattern: str | None = None, media_type_override: str | None = None) -> MetadataDetection | None:
+    return detect_metadata(source, filename_pattern, media_type_override)
 
 
 def metadata_to_ffmpeg_args(metadata: EpisodeMetadata | MovieMetadata) -> list[str]:

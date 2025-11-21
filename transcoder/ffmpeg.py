@@ -61,7 +61,7 @@ def build_transcode_command(
     Build ffmpeg command for transcoding mode.
     
     Args:
-        input_path: Input .mkv file path
+        input_path: Input video file path
         output_path: Output .mp4 file path
         video_bitrate_kbps: Target video bitrate in kbps
         subtitle_streams: List of tuples (stream_index, language_code) for text subtitles
@@ -203,7 +203,7 @@ def build_rewrap_command(
     Build ffmpeg command for rewrap mode (stream copy).
     
     Args:
-        input_path: Input .mkv file path
+        input_path: Input video file path
         output_path: Output .mp4 file path
         subtitle_streams: List of tuples (stream_index, language_code) for text subtitles
         probe_data: Video probe data to detect codec (optional)
