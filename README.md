@@ -97,6 +97,11 @@ Custom target file size:
 transcode --targetSizePerHour 1200 "video.mkv"
 ```
 
+Show version/licensing information:
+```bash
+transcode --about
+```
+
 Custom output directory:
 ```bash
 transcode --targetDir /path/to/output "video.mkv"

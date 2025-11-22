@@ -16,8 +16,10 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+import os
 import shutil
 import subprocess
+import sys
 from fractions import Fraction
 from pathlib import Path
 
@@ -31,13 +33,127 @@ from transcoder.constants import (
 from transcoder.exceptions import FFmpegError
 from transcoder.language import normalize_language_tag
 
+# Global cache for bundled binary paths
+_BUNDLED_FFMPEG_PATH: str | None = None
+_BUNDLED_FFPROBE_PATH: str | None = None
+_BUNDLED_TEMP_DIR: Path | None = None
+
+
+def _get_bundled_binary_path(binary_name: str) -> str | None:
+    """
+    Get path to bundled ffmpeg binary if running from PyInstaller executable.
+    
+    PyInstaller extracts bundled files to a temp directory. This function
+    locates and extracts bundled binaries if needed.
+    
+    Args:
+        binary_name: Name of binary ('ffmpeg' or 'ffprobe', with .exe on Windows)
+    
+    Returns:
+        Path to bundled binary or None if not found
+    """
+    global _BUNDLED_FFMPEG_PATH, _BUNDLED_FFPROBE_PATH, _BUNDLED_TEMP_DIR
+    
+    # Check if we're running from PyInstaller
+    if not getattr(sys, 'frozen', False):
+        return None
+    
+    # Check cache first
+    if binary_name == "ffmpeg" and _BUNDLED_FFMPEG_PATH:
+        return _BUNDLED_FFMPEG_PATH
+    if binary_name == "ffprobe" and _BUNDLED_FFPROBE_PATH:
+        return _BUNDLED_FFPROBE_PATH
+    
+    # Determine binary name with extension
+    if sys.platform == "win32":
+        binary_name_with_ext = f"{binary_name}.exe"
+    else:
+        binary_name_with_ext = binary_name
+    
+    # Get PyInstaller temp directory
+    if sys.platform == "win32":
+        # On Windows, PyInstaller uses _MEIPASS
+        base_path = getattr(sys, '_MEIPASS', None)
+    else:
+        # On macOS/Linux, PyInstaller uses _MEIPASS
+        base_path = getattr(sys, '_MEIPASS', None)
+    
+    if not base_path:
+        return None
+    
+    # Look for binary in PyInstaller temp directory
+    bundled_path = Path(base_path) / "ffmpeg" / binary_name_with_ext
+    
+    if bundled_path.exists() and bundled_path.is_file():
+        # Make executable on Unix systems
+        if sys.platform != "win32":
+            os.chmod(bundled_path, 0o755)
+        
+        # Cache the path
+        if binary_name == "ffmpeg":
+            _BUNDLED_FFMPEG_PATH = str(bundled_path)
+        else:
+            _BUNDLED_FFPROBE_PATH = str(bundled_path)
+        
+        return str(bundled_path)
+    
+    return None
+
+
+def get_ffmpeg_path() -> str:
+    """
+    Get path to ffmpeg binary, preferring bundled version if available.
+    
+    Returns:
+        Path to ffmpeg binary
+    
+    Raises:
+        FFmpegError: If ffmpeg is not found
+    """
+    # Try bundled binary first
+    bundled_path = _get_bundled_binary_path("ffmpeg")
+    if bundled_path:
+        return bundled_path
+    
+    # Fall back to system binary
+    system_path = shutil.which("ffmpeg")
+    if system_path:
+        return system_path
+    
+    raise FFmpegError("ffmpeg not found. Please install ffmpeg or use the bundled executable.")
+
+
+def get_ffprobe_path() -> str:
+    """
+    Get path to ffprobe binary, preferring bundled version if available.
+    
+    Returns:
+        Path to ffprobe binary
+    
+    Raises:
+        FFmpegError: If ffprobe is not found
+    """
+    # Try bundled binary first
+    bundled_path = _get_bundled_binary_path("ffprobe")
+    if bundled_path:
+        return bundled_path
+    
+    # Fall back to system binary
+    system_path = shutil.which("ffprobe")
+    if system_path:
+        return system_path
+    
+    raise FFmpegError("ffprobe not found. Please install ffmpeg or use the bundled executable.")
+
 
 def check_ffmpeg_available() -> bool:
     """Check if ffmpeg and ffprobe are available."""
-    return (
-        shutil.which("ffmpeg") is not None and
-        shutil.which("ffprobe") is not None
-    )
+    try:
+        get_ffmpeg_path()
+        get_ffprobe_path()
+        return True
+    except FFmpegError:
+        return False
 
 
 def detect_gpu_encoder() -> str:
@@ -54,10 +170,12 @@ def detect_gpu_encoder() -> str:
         ("hevc_videotoolbox", "Apple"),
     ]
     
+    ffmpeg_path = get_ffmpeg_path()
+    
     for encoder, vendor in encoders:
         try:
             result = subprocess.run(
-                ["ffmpeg", "-hide_banner", "-encoders"],
+                [ffmpeg_path, "-hide_banner", "-encoders"],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -82,8 +200,9 @@ def probe_video_file(file_path: Path) -> dict:
     # ffmpeg-python's probe() doesn't handle multiple show_entries well,
     # so we use subprocess directly for this specific use case
     try:
+        ffprobe_path = get_ffprobe_path()
         cmd = [
-            "ffprobe",
+            ffprobe_path,
             "-v", "error",
             "-show_entries", "stream=index,codec_name,codec_type,codec_long_name,duration,r_frame_rate,avg_frame_rate",
             "-show_entries", "format=duration",
@@ -386,8 +505,9 @@ def convert_image_for_apple_tv(image_path: Path, temp_dir: Path) -> Path:
     # -q:v 2: high quality JPEG
     # Use double quotes for Windows compatibility
     scale_filter = "scale='min(2000,iw)':'min(2000,ih)':force_original_aspect_ratio=decrease"
+    ffmpeg_path = get_ffmpeg_path()
     cmd = [
-        "ffmpeg",
+        ffmpeg_path,
         "-i", str(image_path),
         "-vf", scale_filter,
         "-q:v", "2",

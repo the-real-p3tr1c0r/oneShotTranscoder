@@ -44,7 +44,7 @@ from transcoder.constants import (
 from transcoder.exceptions import FFmpegError
 from transcoder.metadata import EpisodeMetadata, MovieMetadata, metadata_to_ffmpeg_args
 from transcoder.subtitles import GeneratedSubtitle
-from transcoder.utils import detect_gpu_encoder
+from transcoder.utils import detect_gpu_encoder, get_ffmpeg_path
 
 
 def build_transcode_command(
@@ -76,8 +76,9 @@ def build_transcode_command(
     encoder = encoder or detect_gpu_encoder()
     generated_subtitles = generated_subtitles or []
     
+    ffmpeg_path = get_ffmpeg_path()
     cmd = [
-        "ffmpeg",
+        ffmpeg_path,
         "-i",
         str(input_path),
     ]
@@ -225,8 +226,9 @@ def build_rewrap_command(
                 codec_name = stream.get("codec_name", "").lower()
                 subtitle_codec_map[stream_idx] = codec_name
     
+    ffmpeg_path = get_ffmpeg_path()
     cmd = [
-        "ffmpeg",
+        ffmpeg_path,
         "-i",
         str(input_path),
     ]

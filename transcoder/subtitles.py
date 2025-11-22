@@ -36,6 +36,7 @@ from transcoder.language import (
     normalize_language_for_easyocr,
     normalize_language_tag,
 )
+from transcoder.utils import get_ffmpeg_path, get_ffprobe_path
 
 
 @dataclass
@@ -78,8 +79,9 @@ def probe_subtitle_streams(media: Path) -> list[SubtitleStreamInfo]:
     """
     import json
     
+    ffprobe_path = get_ffprobe_path()
     cmd = [
-        "ffprobe",
+        ffprobe_path,
         "-v",
         "error",
         "-select_streams",
@@ -143,9 +145,10 @@ def extract_subtitle_sup(
     language_code = (stream.language or "und").lower()
     filename = f"{media.stem}.track{stream.type_index}.{language_code}.sup"
     sup_path = temp_dir / filename
+    ffmpeg_path = get_ffmpeg_path()
     subprocess.run(
         [
-            "ffmpeg",
+            ffmpeg_path,
             "-y",
             "-loglevel",
             "error",

@@ -22,6 +22,7 @@ import sys
 import traceback
 from pathlib import Path
 
+from transcoder import license as license_info
 from transcoder.constants import DEFAULT_TARGET_SIZE_MB_PER_HOUR
 from transcoder.exceptions import TranscoderError
 from transcoder.metadata import DEFAULT_FILENAME_PATTERN
@@ -201,6 +202,11 @@ Default behavior:
         """
     )
     parser.add_argument(
+        "--about",
+        action="store_true",
+        help="Print version, license, and attribution details then exit.",
+    )
+    parser.add_argument(
         "--rewrap",
         action="store_true",
         help="Rewrap/copy streams without transcoding. Much faster but preserves "
@@ -272,10 +278,6 @@ Default behavior:
 
 def main() -> None:
     """Main entry point for transcoding."""
-    if not check_ffmpeg_available():
-        print("Error: ffmpeg or ffprobe not found. Please install ffmpeg.")
-        sys.exit(1)
-
     try:
         args = parse_arguments()
     except ValueError as e:
@@ -287,6 +289,14 @@ def main() -> None:
             raise
         print(f"Error during initialization: {e}")
         sys.exit(e.code or 1)
+
+    if getattr(args, "about", False):
+        print(license_info.format_about_text())
+        return
+
+    if not check_ffmpeg_available():
+        print("Error: ffmpeg or ffprobe not found. Please install ffmpeg.")
+        sys.exit(1)
     # Determine target directory first (needed for both wildcard and normal processing)
     target_dir = None
     if args.targetDir:

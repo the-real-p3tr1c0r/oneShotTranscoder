@@ -43,6 +43,7 @@ Thumbs.db
 # Project specific
 *.log
 *.tmp
+ffmpeg_binaries/
 
 # Video files
 *.mkv

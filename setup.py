@@ -166,6 +166,11 @@ setup(
     packages=find_packages(),
     python_requires=">=3.10",
     license="GPL-3.0-or-later",
+    license_files=[
+        "LICENSE",
+        "NOTICE.md",
+        "THIRD_PARTY_LICENSES.md",
+    ],
     install_requires=[
         "easyocr",
         "opencv-python",
