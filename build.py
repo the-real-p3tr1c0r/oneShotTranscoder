@@ -257,14 +257,18 @@ def prepare_ffmpeg_binaries() -> Path:
     return ffmpeg_dir
 
 
-def update_spec_file(ffmpeg_dir: Path) -> Path:
+def update_spec_file(ffmpeg_dir: Path, spec_name: str = "transcode.spec") -> Path:
     """
     Create a modified spec file with ffmpeg binaries included.
+    
+    Args:
+        ffmpeg_dir: Directory containing ffmpeg binaries
+        spec_name: Name of the spec file to use
     
     Returns:
         Path to the modified spec file
     """
-    spec_path = Path("transcode.spec")
+    spec_path = Path(spec_name)
     
     if not spec_path.exists():
         raise FileNotFoundError("transcode.spec not found")
@@ -340,9 +344,14 @@ def update_spec_file(ffmpeg_dir: Path) -> Path:
     return modified_spec
 
 
-def build_executable(spec_file: Path) -> None:
-    """Build the executable using PyInstaller."""
-    print("Building executable with PyInstaller...")
+def build_executable(spec_file: Path, build_mode: str = "full") -> None:
+    """Build the executable using PyInstaller.
+    
+    Args:
+        spec_file: Path to spec file
+        build_mode: "full" for self-contained, "lightweight" for on-demand
+    """
+    print(f"Building executable in {build_mode} mode...")
     
     # Check if PyInstaller is installed
     try:
@@ -365,7 +374,12 @@ def build_executable(spec_file: Path) -> None:
     
     print("Build completed successfully!")
     exe_ext = ".exe" if platform.system() == "Windows" else ""
-    exe_path = Path("dist") / f"transcode{exe_ext}"
+    
+    if build_mode == "full":
+        exe_path = Path("dist") / "transcode" / f"transcode{exe_ext}"
+    else:
+        exe_path = Path("dist") / "transcode-lightweight" / f"transcode{exe_ext}"
+    
     if exe_path.exists():
         print(f"Executable location: {exe_path.resolve()}")
     else:
@@ -374,6 +388,17 @@ def build_executable(spec_file: Path) -> None:
 
 def main():
     """Main build function."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Build transcoder executable")
+    parser.add_argument(
+        "--mode",
+        choices=["full", "lightweight", "both"],
+        default="both",
+        help="Build mode: 'full' (self-contained), 'lightweight' (on-demand), or 'both'"
+    )
+    args = parser.parse_args()
+    
     print("=" * 60)
     print("Transcoder Build Script")
     print("=" * 60)
@@ -390,28 +415,38 @@ def main():
         print("  - macOS/Linux: ffmpeg, ffprobe")
         sys.exit(1)
     
-    # Step 2: Update spec file
-    print("\nStep 2: Updating PyInstaller spec file...")
-    try:
-        modified_spec = update_spec_file(ffmpeg_dir)
-    except Exception as e:
-        print(f"Error updating spec file: {e}")
-        sys.exit(1)
+    build_modes = []
+    if args.mode in ["full", "both"]:
+        build_modes.append(("full", "transcode_full.spec"))
+    if args.mode in ["lightweight", "both"]:
+        build_modes.append(("lightweight", "transcode_lightweight.spec"))
     
-    # Step 3: Build executable
-    print("\nStep 3: Building executable...")
-    try:
-        build_executable(modified_spec)
-    except Exception as e:
-        print(f"Error building executable: {e}")
-        sys.exit(1)
-    finally:
-        # Clean up temporary spec file
-        if modified_spec.exists():
-            modified_spec.unlink()
+    for mode_name, spec_name in build_modes:
+        print(f"\n{'=' * 60}")
+        print(f"Building {mode_name} version...")
+        print("=" * 60)
+        
+        # Step 2: Update spec file
+        print(f"\nStep 2: Updating {spec_name}...")
+        try:
+            modified_spec = update_spec_file(ffmpeg_dir, spec_name)
+        except Exception as e:
+            print(f"Error updating spec file: {e}")
+            continue
+        
+        # Step 3: Build executable
+        print(f"\nStep 3: Building {mode_name} executable...")
+        try:
+            build_executable(modified_spec, mode_name)
+        except Exception as e:
+            print(f"Error building executable: {e}")
+        finally:
+            # Clean up temporary spec file
+            if modified_spec.exists():
+                modified_spec.unlink()
     
     print("\n" + "=" * 60)
-    print("Build completed successfully!")
+    print("Build completed!")
     print("=" * 60)
 
 

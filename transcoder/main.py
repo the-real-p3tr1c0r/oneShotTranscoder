@@ -297,6 +297,21 @@ def main() -> None:
     if not check_ffmpeg_available():
         print("Error: ffmpeg or ffprobe not found. Please install ffmpeg.")
         sys.exit(1)
+    
+    # Check dependencies (only if bitmap subtitle conversion is enabled)
+    if not getattr(args, "noBitmapSubs", False):
+        try:
+            from transcoder.dependency_manager import check_dependencies
+            all_available, missing = check_dependencies()
+            if not all_available:
+                print(f"Warning: Missing dependencies for bitmap subtitle conversion: {', '.join(missing)}")
+                print("Bitmap subtitle conversion will be skipped. Install dependencies with:")
+                print("  pip install torch torchvision easyocr opencv-python")
+                # Continue anyway, but disable bitmap subs
+                args.noBitmapSubs = True
+        except ImportError:
+            # dependency_manager not available (full build), assume deps are bundled
+            pass
     # Determine target directory first (needed for both wildcard and normal processing)
     target_dir = None
     if args.targetDir:
