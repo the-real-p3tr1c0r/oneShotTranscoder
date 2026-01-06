@@ -387,27 +387,34 @@ def build_executable(spec_file: Path, build_mode: str = "full") -> None:
         print("Warning: Executable not found at expected location")
 
 
-def find_nsis_compiler() -> Optional[str]:
-    """Find NSIS compiler (makensis.exe).
+def find_inno_setup_compiler() -> Optional[str]:
+    """Find Inno Setup compiler (ISCC.exe).
     
     Checks:
     1. PATH
-    2. Common installation locations
+    2. Common installation locations (system and user)
     
     Returns:
-        Path to makensis.exe if found, None otherwise
+        Path to ISCC.exe if found, None otherwise
     """
     # Check PATH first
-    nsis_compiler = shutil.which("makensis") or shutil.which("makensis.exe")
-    if nsis_compiler:
-        return nsis_compiler
+    iscc = shutil.which("ISCC") or shutil.which("ISCC.exe")
+    if iscc:
+        return iscc
     
-    # Check common installation paths
+    # Build list of paths to check
     common_paths = [
-        Path("C:/Program Files (x86)/NSIS/makensis.exe"),
-        Path("C:/Program Files/NSIS/makensis.exe"),
-        Path(os.environ.get("ProgramFiles(x86)", "")) / "NSIS" / "makensis.exe",
-        Path(os.environ.get("ProgramFiles", "")) / "NSIS" / "makensis.exe",
+        # System-wide installations
+        Path("C:/Program Files (x86)/Inno Setup 6/ISCC.exe"),
+        Path("C:/Program Files/Inno Setup 6/ISCC.exe"),
+        Path(os.environ.get("ProgramFiles(x86)", "")) / "Inno Setup 6" / "ISCC.exe",
+        Path(os.environ.get("ProgramFiles", "")) / "Inno Setup 6" / "ISCC.exe",
+        # User-local installations (winget default)
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Inno Setup 6" / "ISCC.exe",
+        Path.home() / "AppData" / "Local" / "Programs" / "Inno Setup 6" / "ISCC.exe",
+        # Older versions
+        Path("C:/Program Files (x86)/Inno Setup 5/ISCC.exe"),
+        Path("C:/Program Files/Inno Setup 5/ISCC.exe"),
     ]
     
     for path in common_paths:
@@ -417,11 +424,46 @@ def find_nsis_compiler() -> Optional[str]:
     return None
 
 
-def build_installer(nsis_path: Optional[str] = None, build_mode: str = "lightweight") -> bool:
-    """Build NSIS installer for Windows.
+def get_directory_size(path: Path) -> int:
+    """Get total size of a directory in bytes."""
+    total = 0
+    for item in path.rglob("*"):
+        if item.is_file():
+            total += item.stat().st_size
+    return total
+
+
+def create_zip_archive(build_dir: Path, output_path: Path) -> bool:
+    """Create a ZIP archive of the build directory.
     
     Args:
-        nsis_path: Optional path to makensis.exe. If not provided, will search.
+        build_dir: Directory to archive
+        output_path: Path for the output ZIP file
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    import zipfile
+    
+    print(f"Creating ZIP archive: {output_path.name}...")
+    
+    try:
+        with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for file_path in build_dir.rglob("*"):
+                if file_path.is_file():
+                    arcname = file_path.relative_to(build_dir.parent)
+                    zipf.write(file_path, arcname)
+        return True
+    except Exception as e:
+        print(f"Error creating ZIP: {e}")
+        return False
+
+
+def build_installer(iscc_path: Optional[str] = None, build_mode: str = "lightweight") -> bool:
+    """Build Inno Setup installer for Windows.
+    
+    Args:
+        iscc_path: Optional path to ISCC.exe. If not provided, will search.
         build_mode: "full" or "lightweight" - which build to package
     
     Returns:
@@ -431,23 +473,6 @@ def build_installer(nsis_path: Optional[str] = None, build_mode: str = "lightwei
     if system != "Windows":
         print("Installer generation is only supported on Windows")
         return False
-    
-    # Find NSIS compiler
-    if nsis_path:
-        nsis_compiler = nsis_path
-        if not Path(nsis_compiler).exists():
-            print(f"Error: NSIS compiler not found at specified path: {nsis_compiler}")
-            return False
-    else:
-        nsis_compiler = find_nsis_compiler()
-        if not nsis_compiler:
-            print("Warning: NSIS compiler (makensis) not found")
-            print("\nTo build installer:")
-            print("1. Install NSIS from https://nsis.sourceforge.io/")
-            print("2. Add NSIS to PATH, or")
-            print("3. Use --nsis-path to specify the path to makensis.exe")
-            print("\nExample: python build.py --mode lightweight --installer --nsis-path \"C:\\Program Files (x86)\\NSIS\\makensis.exe\"")
-            return False
     
     # Check if the requested build exists
     if build_mode == "full":
@@ -461,24 +486,48 @@ def build_installer(nsis_path: Optional[str] = None, build_mode: str = "lightwei
         print(f"Error: {build_mode} build not found. Build it first with --mode {build_mode}")
         return False
     
+    # Check build size (informational)
+    build_size = get_directory_size(build_dir)
+    build_size_mb = build_size / (1024 * 1024)
+    print(f"\nBuild size: {build_size_mb:.1f} MB")
+    
+    # Find Inno Setup compiler
+    if iscc_path:
+        iscc_compiler = iscc_path
+        if not Path(iscc_compiler).exists():
+            print(f"Error: Inno Setup compiler not found at specified path: {iscc_compiler}")
+            return False
+    else:
+        iscc_compiler = find_inno_setup_compiler()
+        if not iscc_compiler:
+            print("Warning: Inno Setup compiler (ISCC.exe) not found")
+            print("\nTo build installer:")
+            print("1. Install Inno Setup: winget install JRSoftware.InnoSetup")
+            print("   Or download from: https://jrsoftware.org/isdl.php")
+            print("2. Add to PATH, or use --iscc-path to specify the path")
+            print("\nExample: python build.py --mode lightweight --installer --iscc-path \"C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe\"")
+            return False
+    
     print("\n" + "=" * 60)
-    print(f"Building NSIS installer for {build_mode} build...")
+    print(f"Building Inno Setup installer for {build_mode} build...")
     print("=" * 60)
     
     # Ensure dist directory exists
     Path("dist").mkdir(exist_ok=True)
     
     # Build installer with build mode parameter
-    installer_script = Path("installer.nsi")
+    installer_script = Path("installer.iss")
     if not installer_script.exists():
         print(f"Error: Installer script not found: {installer_script}")
         return False
     
-    cmd = [nsis_compiler, f"/DBUILD_MODE={build_mode}", str(installer_script)]
+    # Inno Setup uses /D for defines
+    cmd = [iscc_compiler, f"/DBUILD_MODE={build_mode}", str(installer_script)]
+    print(f"Running: {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=Path.cwd())
     
     if result.returncode != 0:
-        print("Error: NSIS installer build failed")
+        print("Error: Inno Setup installer build failed")
         return False
     
     installer_path = Path("dist") / installer_name
@@ -510,10 +559,15 @@ def main():
         help="Build NSIS installer(s) for the specified build mode(s) (Windows only)"
     )
     parser.add_argument(
-        "--nsis-path",
+        "--iscc-path",
         type=str,
         default=None,
-        help="Path to makensis.exe (if NSIS is not in PATH)"
+        help="Path to ISCC.exe (Inno Setup compiler, if not in PATH)"
+    )
+    parser.add_argument(
+        "--installer-only",
+        action="store_true",
+        help="Skip building executable, only create installer from existing build"
     )
     args = parser.parse_args()
     
@@ -521,6 +575,31 @@ def main():
     print("Transcoder Build Script")
     print("=" * 60)
     print()
+    
+    # If --installer-only, skip build and go straight to installer
+    if args.installer_only:
+        print("Installer-only mode: skipping build, using existing dist/")
+        
+        # Determine which installers to build
+        installer_modes = []
+        if args.mode == "both":
+            installer_modes = ["lightweight", "full"]
+        elif args.mode in ["full", "lightweight"]:
+            installer_modes = [args.mode]
+        
+        for installer_mode in installer_modes:
+            if installer_mode == "full":
+                build_dir = Path("dist") / "transcode"
+            else:
+                build_dir = Path("dist") / "transcode-lightweight"
+            
+            if build_dir.exists():
+                build_installer(args.iscc_path, installer_mode)
+            else:
+                print(f"\nError: {installer_mode} build not found at {build_dir}")
+                print(f"Build it first with: python build.py --mode {installer_mode}")
+        
+        return
     
     # Step 1: Prepare ffmpeg binaries
     print("Step 1: Preparing FFmpeg binaries...")
@@ -584,7 +663,7 @@ def main():
                 build_dir = Path("dist") / "transcode-lightweight"
             
             if build_dir.exists():
-                build_installer(args.nsis_path, installer_mode)
+                build_installer(args.iscc_path, installer_mode)
             else:
                 print(f"\nWarning: {installer_mode} build not found. Skipping installer.")
                 print(f"Build it first with --mode {installer_mode}")

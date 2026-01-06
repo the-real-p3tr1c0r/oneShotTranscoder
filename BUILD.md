@@ -20,7 +20,7 @@ All builds:
 1. **Python 3.10 or higher**
 2. **PyInstaller**: Install with `pip install pyinstaller`
 3. **Internet connection** (for downloading ffmpeg binaries during build)
-4. **NSIS** (Windows only, for installer): Download from https://nsis.sourceforge.io/ and add to PATH
+4. **Inno Setup** (Windows only, for installer): `winget install JRSoftware.InnoSetup` or download from https://jrsoftware.org/isdl.php
 
 ## Quick Start
 
@@ -86,7 +86,7 @@ The installers will:
 - `dist/transcoder-setup.exe` (lightweight build)
 - `dist/transcoder-setup-full.exe` (full build)
 
-**Note**: Requires NSIS to be installed and in PATH.
+**Note**: Requires Inno Setup to be installed. Install with `winget install JRSoftware.InnoSetup`
 
 ## Build Process
 

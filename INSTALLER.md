@@ -6,10 +6,10 @@ This document explains how to build and use the Windows installer for Transcoder
 
 ### Prerequisites
 
-1. **NSIS** (Nullsoft Scriptable Install System)
-   - Download from: https://nsis.sourceforge.io/
-   - Install and ensure `makensis.exe` is in your PATH
-   - Verify installation: `makensis /VERSION`
+1. **Inno Setup** (Windows installer creator)
+   - Install with: `winget install JRSoftware.InnoSetup`
+   - Or download from: https://jrsoftware.org/isdl.php
+   - Verify installation: `ISCC /?`
 
 2. **Build the executable(s) first**:
    ```bash
@@ -35,18 +35,23 @@ This document explains how to build and use the Windows installer for Transcoder
    python build.py --mode both --installer
    ```
 
+4. **Test installer without rebuilding** (using existing build):
+   ```bash
+   python build.py --mode full --installer-only
+   ```
+
 ### Manual Installer Build
 
 If you prefer to build the installer manually:
 
 **Lightweight installer:**
 ```bash
-makensis /DBUILD_MODE=lightweight installer.nsi
+ISCC /DBUILD_MODE=lightweight installer.iss
 ```
 
 **Full installer:**
 ```bash
-makensis /DBUILD_MODE=full installer.nsi
+ISCC /DBUILD_MODE=full installer.iss
 ```
 
 The installers will be created at:
@@ -55,7 +60,7 @@ The installers will be created at:
 
 ## Installer Features
 
-The NSIS installer provides:
+The Inno Setup installer provides:
 
 1. **Professional Installation**
    - Standard Windows installer interface
