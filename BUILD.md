@@ -4,17 +4,23 @@ This document explains how to build a standalone executable for the transcoder p
 
 ## Overview
 
-The build system creates a standalone executable that:
-- Bundles ffmpeg and ffprobe binaries (no external installation needed)
-- Includes all Python dependencies
-- Works on Windows, macOS, and Linux
-- Creates a single executable file (`.exe` on Windows, binary on macOS/Linux)
+The build system supports multiple packaging options:
+
+1. **Full Build**: Self-contained executable with all dependencies (including OCR libraries)
+2. **Lightweight Build**: Smaller executable with on-demand dependency loading
+3. **Windows Installer**: Professional installer that registers the application in Control Panel and adds to PATH
+
+All builds:
+- Bundle ffmpeg and ffprobe binaries (no external installation needed)
+- Work on Windows, macOS, and Linux
+- Include license notices for distribution compliance
 
 ## Prerequisites
 
 1. **Python 3.10 or higher**
 2. **PyInstaller**: Install with `pip install pyinstaller`
 3. **Internet connection** (for downloading ffmpeg binaries during build)
+4. **NSIS** (Windows only, for installer): Download from https://nsis.sourceforge.io/ and add to PATH
 
 ## Quick Start
 
@@ -32,6 +38,55 @@ Or run the Python script directly:
 ```bash
 python build.py
 ```
+
+### Build Modes
+
+Build lightweight version (recommended for smaller size):
+```bash
+python build.py --mode lightweight
+```
+
+Build full version (includes all dependencies):
+```bash
+python build.py --mode full
+```
+
+Build both versions:
+```bash
+python build.py --mode both
+```
+
+### Windows Installer
+
+To create Windows installers that register in Control Panel:
+
+**Lightweight installer:**
+```bash
+python build.py --mode lightweight --installer
+```
+
+**Full installer:**
+```bash
+python build.py --mode full --installer
+```
+
+**Both installers:**
+```bash
+python build.py --mode both --installer
+```
+
+The installers will:
+- Install to `C:\Program Files\Transcoder\`
+- Register in Windows Control Panel (Apps & Features)
+- Optionally add to system PATH
+- Create Start Menu shortcuts
+- Provide uninstaller
+
+**Output files:**
+- `dist/transcoder-setup.exe` (lightweight build)
+- `dist/transcoder-setup-full.exe` (full build)
+
+**Note**: Requires NSIS to be installed and in PATH.
 
 ## Build Process
 
@@ -64,13 +119,42 @@ If automatic download fails, you can manually place ffmpeg binaries:
 ## Output
 
 After successful build:
-- **Windows**: `dist/transcode.exe`
-- **macOS/Linux**: `dist/transcode`
 
-The executable is standalone and includes:
-- All Python dependencies
+### Lightweight Build
+- **Windows**: `dist/transcode-lightweight/transcode.exe` (directory with dependencies)
+- **macOS/Linux**: `dist/transcode-lightweight/transcode` (directory with dependencies)
+- **Size**: ~50-100 MB (OCR dependencies loaded on-demand)
+- **OCR Support**: Requires system Python or will download dependencies on first use
+
+### Full Build
+- **Windows**: `dist/transcode/transcode.exe` (directory with all dependencies)
+- **macOS/Linux**: `dist/transcode/transcode` (directory with all dependencies)
+- **Size**: ~500 MB - 2 GB (includes all OCR dependencies)
+- **OCR Support**: Fully self-contained
+
+### Windows Installer
+
+**Lightweight Installer:**
+- **Output**: `dist/transcoder-setup.exe`
+- **Size**: ~50-100 MB (lightweight build packaged)
+- **Features**: 
+  - Control Panel registration
+  - PATH integration (optional)
+  - Start Menu shortcuts
+  - Uninstaller
+
+**Full Installer:**
+- **Output**: `dist/transcoder-setup-full.exe`
+- **Size**: ~500 MB - 2 GB (full build packaged)
+- **Features**: 
+  - Control Panel registration
+  - PATH integration (optional)
+  - Start Menu shortcuts
+  - Uninstaller
+  - All OCR dependencies included (no system Python required)
+
+All builds include:
 - FFmpeg binaries
-- EasyOCR models (if needed)
 - License notices (`LICENSE`, `NOTICE.md`, `THIRD_PARTY_LICENSES.md`) for distribution compliance
 
 ## Troubleshooting
@@ -123,11 +207,24 @@ pyinstaller transcode.spec --clean --onefile
 
 ## Distribution
 
+### Standalone Executable
 The built executable can be distributed independently:
-- No Python installation required on target system
+- No Python installation required on target system (for full build)
 - No FFmpeg installation required on target system
-- All dependencies are bundled
 - License documents placed next to the executable satisfy GPL/FFmpeg attribution requirements
+
+### Windows Installer (Recommended)
+The installer provides the best user experience:
+- Professional installation process
+- Appears in Windows Control Panel
+- Easy uninstallation
+- PATH integration for command-line access
+- System-wide installation
+
+**Lightweight Build Notes**:
+- First OCR use may require downloading dependencies (~2GB for torch/easyocr)
+- Requires system Python 3.10+ for dependency installation
+- Dependencies are cached in `%LOCALAPPDATA%\transcoder\` after first use
 
 ## License Compliance Checklist
 

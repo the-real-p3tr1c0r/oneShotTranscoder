@@ -24,6 +24,7 @@ import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
+from typing import Optional
 
 # FFmpeg download URLs (using static builds from BtbN/ffmpeg-builds)
 FFMPEG_URLS = {
@@ -386,6 +387,112 @@ def build_executable(spec_file: Path, build_mode: str = "full") -> None:
         print("Warning: Executable not found at expected location")
 
 
+def find_nsis_compiler() -> Optional[str]:
+    """Find NSIS compiler (makensis.exe).
+    
+    Checks:
+    1. PATH
+    2. Common installation locations
+    
+    Returns:
+        Path to makensis.exe if found, None otherwise
+    """
+    # Check PATH first
+    nsis_compiler = shutil.which("makensis") or shutil.which("makensis.exe")
+    if nsis_compiler:
+        return nsis_compiler
+    
+    # Check common installation paths
+    common_paths = [
+        Path("C:/Program Files (x86)/NSIS/makensis.exe"),
+        Path("C:/Program Files/NSIS/makensis.exe"),
+        Path(os.environ.get("ProgramFiles(x86)", "")) / "NSIS" / "makensis.exe",
+        Path(os.environ.get("ProgramFiles", "")) / "NSIS" / "makensis.exe",
+    ]
+    
+    for path in common_paths:
+        if path.exists():
+            return str(path)
+    
+    return None
+
+
+def build_installer(nsis_path: Optional[str] = None, build_mode: str = "lightweight") -> bool:
+    """Build NSIS installer for Windows.
+    
+    Args:
+        nsis_path: Optional path to makensis.exe. If not provided, will search.
+        build_mode: "full" or "lightweight" - which build to package
+    
+    Returns:
+        True if installer was built successfully, False otherwise
+    """
+    system, _ = get_platform_info()
+    if system != "Windows":
+        print("Installer generation is only supported on Windows")
+        return False
+    
+    # Find NSIS compiler
+    if nsis_path:
+        nsis_compiler = nsis_path
+        if not Path(nsis_compiler).exists():
+            print(f"Error: NSIS compiler not found at specified path: {nsis_compiler}")
+            return False
+    else:
+        nsis_compiler = find_nsis_compiler()
+        if not nsis_compiler:
+            print("Warning: NSIS compiler (makensis) not found")
+            print("\nTo build installer:")
+            print("1. Install NSIS from https://nsis.sourceforge.io/")
+            print("2. Add NSIS to PATH, or")
+            print("3. Use --nsis-path to specify the path to makensis.exe")
+            print("\nExample: python build.py --mode lightweight --installer --nsis-path \"C:\\Program Files (x86)\\NSIS\\makensis.exe\"")
+            return False
+    
+    # Check if the requested build exists
+    if build_mode == "full":
+        build_dir = Path("dist") / "transcode"
+        installer_name = "transcoder-setup-full.exe"
+    else:
+        build_dir = Path("dist") / "transcode-lightweight"
+        installer_name = "transcoder-setup.exe"
+    
+    if not build_dir.exists():
+        print(f"Error: {build_mode} build not found. Build it first with --mode {build_mode}")
+        return False
+    
+    print("\n" + "=" * 60)
+    print(f"Building NSIS installer for {build_mode} build...")
+    print("=" * 60)
+    
+    # Ensure dist directory exists
+    Path("dist").mkdir(exist_ok=True)
+    
+    # Build installer with build mode parameter
+    installer_script = Path("installer.nsi")
+    if not installer_script.exists():
+        print(f"Error: Installer script not found: {installer_script}")
+        return False
+    
+    cmd = [nsis_compiler, f"/DBUILD_MODE={build_mode}", str(installer_script)]
+    result = subprocess.run(cmd, cwd=Path.cwd())
+    
+    if result.returncode != 0:
+        print("Error: NSIS installer build failed")
+        return False
+    
+    installer_path = Path("dist") / installer_name
+    if installer_path.exists():
+        size_mb = installer_path.stat().st_size / (1024 * 1024)
+        print(f"\n✓ Installer created successfully: {installer_path.resolve()}")
+        print(f"  Size: {size_mb:.1f} MB")
+        print(f"  Build mode: {build_mode}")
+        return True
+    else:
+        print("Error: Installer file not found after build")
+        return False
+
+
 def main():
     """Main build function."""
     import argparse
@@ -396,6 +503,17 @@ def main():
         choices=["full", "lightweight", "both"],
         default="both",
         help="Build mode: 'full' (self-contained), 'lightweight' (on-demand), or 'both'"
+    )
+    parser.add_argument(
+        "--installer",
+        action="store_true",
+        help="Build NSIS installer(s) for the specified build mode(s) (Windows only)"
+    )
+    parser.add_argument(
+        "--nsis-path",
+        type=str,
+        default=None,
+        help="Path to makensis.exe (if NSIS is not in PATH)"
     )
     args = parser.parse_args()
     
@@ -448,6 +566,28 @@ def main():
     print("\n" + "=" * 60)
     print("Build completed!")
     print("=" * 60)
+    
+    # Build installer if requested
+    if args.installer:
+        # Determine which installers to build
+        installer_modes = []
+        if args.mode == "both":
+            installer_modes = ["lightweight", "full"]
+        elif args.mode in ["full", "lightweight"]:
+            installer_modes = [args.mode]
+        
+        for installer_mode in installer_modes:
+            # Check if the build exists
+            if installer_mode == "full":
+                build_dir = Path("dist") / "transcode"
+            else:
+                build_dir = Path("dist") / "transcode-lightweight"
+            
+            if build_dir.exists():
+                build_installer(args.nsis_path, installer_mode)
+            else:
+                print(f"\nWarning: {installer_mode} build not found. Skipping installer.")
+                print(f"Build it first with --mode {installer_mode}")
 
 
 if __name__ == "__main__":
