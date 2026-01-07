@@ -68,15 +68,15 @@ excludes = [
     'notebook', 'jupyter', 'jupyter_client', 'jupyter_core',
     
     # PyTorch modules not needed for inference
-    'torch.testing',
-    'torch.utils.tensorboard',
-    'torch.utils.bottleneck',
-    'torch.utils.benchmark',
+    # NOTE: torch.testing is REQUIRED - torch.autograd.gradcheck imports it during torch init
+    'torch.utils.tensorboard',  # TensorBoard integration (not used)
+    'torch.utils.bottleneck',    # Profiling tools (not used)
+    'torch.utils.benchmark',     # Benchmarking tools (not used)
     'torch.onnx',  # ONNX export (not used)
     'torch.ao',  # Quantization/AO tools (not used for inference)
     'torch.fx',  # FX graph tools (not used)
     # Note: torch.package is required by torch._jit_internal, so cannot be excluded
-    'torch.profiler',  # Profiling
+    'torch.profiler',  # Profiling (safe to exclude - only used when explicitly profiling)
     
     # TorchVision modules not needed
     'torchvision.datasets',  # Dataset loaders
