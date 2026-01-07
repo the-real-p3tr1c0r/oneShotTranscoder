@@ -17,7 +17,8 @@
   #define BuildDescription "Lightweight build (OCR dependencies loaded on-demand)"
 #endif
 
-#define MyAppName "Transcoder"
+#define MyAppName "One Shot Transcoder"
+#define MyAppFolder "oneShotTranscoder"
 #define MyAppVersion "0.1.0"
 #define MyAppPublisher "oneShotTranscoder Contributors"
 #define MyAppURL "https://github.com/the-real-p3tr1c0r/oneShotTranscoder"
@@ -35,7 +36,7 @@ AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
 
 ; Installation directory
-DefaultDirName={autopf}\{#MyAppName}
+DefaultDirName={autopf}\{#MyAppFolder}
 DefaultGroupName={#MyAppName}
 
 ; License file
@@ -93,8 +94,8 @@ Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 
 [Registry]
 ; Store installation info
-Root: HKLM; Subkey: "Software\{#MyAppName}"; ValueType: string; ValueName: "InstallPath"; ValueData: "{app}"; Flags: uninsdeletekey
-Root: HKLM; Subkey: "Software\{#MyAppName}"; ValueType: string; ValueName: "Version"; ValueData: "{#MyAppVersion}"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\{#MyAppFolder}"; ValueType: string; ValueName: "InstallPath"; ValueData: "{app}"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\{#MyAppFolder}"; ValueType: string; ValueName: "Version"; ValueData: "{#MyAppVersion}"; Flags: uninsdeletekey
 
 [Code]
 const
