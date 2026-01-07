@@ -52,29 +52,11 @@ except Exception:
 package_datas = setuptools_datas + babelfish_datas + easyocr_datas
 
 # Modules to exclude
-# IMPORTANT: Do NOT exclude torch/torchvision modules - they have complex internal
-# dependencies that cause circular imports when partially excluded.
-# Only exclude modules we're 100% certain aren't needed at runtime.
-excludes = [
-    # Testing frameworks (safe - not used by torch internals)
-    'pytest', '_pytest',
-    
-    # Documentation tools (safe)
-    'sphinx', 'docutils', 'rst',
-    'pydoc', 'pydoc_data',
-    
-    # Interactive/notebook environments (safe)
-    'IPython', 'ipykernel', 'ipywidgets',
-    'notebook', 'jupyter', 'jupyter_client', 'jupyter_core',
-    
-    # GUI toolkits (not used - CLI only)
-    'tkinter', '_tkinter',
-    'PyQt5', 'PyQt6', 'PySide2', 'PySide6',
-    
-    # Other clearly unused
-    'matplotlib',  # Plotting (not used at runtime)
-    'pandas',  # Data analysis (not used)
-]
+# SYSTEMATIC FIX: We stop manually excluding anything for the full build.
+# The size savings from excluding stdlib/helper modules (pydoc, unittest, etc.)
+# are negligible compared to the ~2GB torch bundle, but they frequently
+# break internal imports in complex libraries like scipy and torch.
+excludes = []
 
 # Collect all Python files from transcoder package
 a = Analysis(
