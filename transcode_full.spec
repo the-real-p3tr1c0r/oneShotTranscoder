@@ -74,8 +74,8 @@ excludes = [
     'torch.utils.bottleneck',    # Profiling tools (not used)
     'torch.utils.benchmark',     # Benchmarking tools (not used)
     'torch.onnx',  # ONNX export (not used)
-    'torch.ao',  # Quantization/AO tools (not used for inference)
-    'torch.fx',  # FX graph tools (not used)
+    # Note: torch.ao is imported during torch init (quantization), keep included
+    # Note: torch.fx is imported during torch init for symbol registration, keep included
     # Note: torch.package is required by torch._jit_internal, so cannot be excluded
     
     # TorchVision modules not needed
