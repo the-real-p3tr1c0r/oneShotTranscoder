@@ -51,48 +51,29 @@ except Exception:
 # Combine all data files
 package_datas = setuptools_datas + babelfish_datas + easyocr_datas
 
-# Modules to exclude (keeping all GPU/CUDA support)
+# Modules to exclude
+# IMPORTANT: Do NOT exclude torch/torchvision modules - they have complex internal
+# dependencies that cause circular imports when partially excluded.
+# Only exclude modules we're 100% certain aren't needed at runtime.
 excludes = [
-    # Development/testing (not needed at runtime)
-    'pkg_resources.py2_warn',
+    # Testing frameworks (safe - not used by torch internals)
     'pytest', '_pytest',
-    # Note: unittest is required by torch.fx passes during import
-    'test', 'tests',
-    'doctest',
     
-    # Documentation tools
+    # Documentation tools (safe)
     'sphinx', 'docutils', 'rst',
+    'pydoc', 'pydoc_data',
     
-    # Interactive/notebook environments
+    # Interactive/notebook environments (safe)
     'IPython', 'ipykernel', 'ipywidgets',
     'notebook', 'jupyter', 'jupyter_client', 'jupyter_core',
-    
-    # PyTorch modules not needed for inference
-    # NOTE: torch.testing is REQUIRED - torch.autograd.gradcheck imports it during torch init
-    # NOTE: torch.profiler is REQUIRED - torch.__init__ imports it during initialization
-    'torch.utils.tensorboard',  # TensorBoard integration (not used)
-    'torch.utils.bottleneck',    # Profiling tools (not used)
-    'torch.utils.benchmark',     # Benchmarking tools (not used)
-    'torch.onnx',  # ONNX export (not used)
-    # Note: torch.ao is imported during torch init (quantization), keep included
-    # Note: torch.fx is imported during torch init for symbol registration, keep included
-    # Note: torch.package is required by torch._jit_internal, so cannot be excluded
-    
-    # TorchVision modules not needed
-    'torchvision.datasets',  # Dataset loaders
-    'torchvision.prototype',  # Prototype features
     
     # GUI toolkits (not used - CLI only)
     'tkinter', '_tkinter',
     'PyQt5', 'PyQt6', 'PySide2', 'PySide6',
     
-    # Other unused
+    # Other clearly unused
     'matplotlib',  # Plotting (not used at runtime)
     'pandas',  # Data analysis (not used)
-    'scipy.tests', 'numpy.tests',
-    'setuptools._distutils',
-    'xmlrpc',
-    'pydoc', 'pydoc_data',
 ]
 
 # Collect all Python files from transcoder package
