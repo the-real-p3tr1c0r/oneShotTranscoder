@@ -26,7 +26,7 @@ from transcoder import license as license_info
 from transcoder.constants import DEFAULT_TARGET_SIZE_MB_PER_HOUR
 from transcoder.exceptions import TranscoderError
 from transcoder.metadata import DEFAULT_FILENAME_PATTERN
-from transcoder.transcode import transcode_all, transcode_file
+from transcoder.transcode import dry_run_all, dry_run_analyze, transcode_all, transcode_file
 from transcoder.utils import check_ffmpeg_available, expand_path_pattern
 
 
@@ -269,6 +269,13 @@ Default behavior:
         help="Overwrite existing output files. If not specified, output files with existing names "
              "will have an incremental suffix added (e.g., video_1.mp4, video_2.mp4) to avoid overwriting.",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="Analyze files without processing. Shows detected metadata, Apple TV compatibility, "
+             "required actions, and output paths. No files will be modified.",
+    )
     
     try:
         return parser.parse_args()
@@ -332,6 +339,21 @@ def main() -> None:
                 # Expand glob pattern using utility function
                 video_files = expand_path_pattern(source_str)
                 
+                # Check if dry-run mode
+                if getattr(args, "dry_run", False):
+                    print(f"[DRY RUN] Found {len(video_files)} video file(s) matching pattern: {source_str}\n")
+                    for video_file in video_files:
+                        dry_run_analyze(
+                            video_file,
+                            rewrap=args.rewrap,
+                            target_size_mb_per_hour=args.targetSizePerHour,
+                            filename_pattern=args.fileNamePattern,
+                            convert_bitmap_subs=not args.noBitmapSubs,
+                            target_dir=target_dir,
+                            media_type_override=args.type,
+                        )
+                    return
+                
                 # Process matched files directly
                 print(f"Found {len(video_files)} video file(s) matching pattern: {source_str}\n")
                 success_count = 0
@@ -364,16 +386,28 @@ def main() -> None:
         source_path = Path.cwd()
     
     try:
-        transcode_all(
-            source_path,
-            rewrap=args.rewrap,
-            target_size_mb_per_hour=args.targetSizePerHour,
-            filename_pattern=args.fileNamePattern,
-            convert_bitmap_subs=not args.noBitmapSubs,
-            target_dir=target_dir,
-            media_type_override=args.type,
-            overwrite=args.overwrite,
-        )
+        # Check if dry-run mode
+        if getattr(args, "dry_run", False):
+            dry_run_all(
+                source_path,
+                rewrap=args.rewrap,
+                target_size_mb_per_hour=args.targetSizePerHour,
+                filename_pattern=args.fileNamePattern,
+                convert_bitmap_subs=not args.noBitmapSubs,
+                target_dir=target_dir,
+                media_type_override=args.type,
+            )
+        else:
+            transcode_all(
+                source_path,
+                rewrap=args.rewrap,
+                target_size_mb_per_hour=args.targetSizePerHour,
+                filename_pattern=args.fileNamePattern,
+                convert_bitmap_subs=not args.noBitmapSubs,
+                target_dir=target_dir,
+                media_type_override=args.type,
+                overwrite=args.overwrite,
+            )
     except TranscoderError as e:
         print(f"Error during transcoding: {e}")
         sys.exit(1)

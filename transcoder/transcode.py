@@ -19,6 +19,12 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import shutil
 from pathlib import Path
 
+from transcoder.compatibility import (
+    AppleTVCompatibility,
+    CompatibilityStatus,
+    check_apple_tv_compatibility,
+    format_compatibility_report,
+)
 from transcoder.constants import DEFAULT_TARGET_SIZE_MB_PER_HOUR, SUPPORTED_VIDEO_FORMATS
 from transcoder.ffmpeg import (
     build_rewrap_command,
@@ -59,6 +65,253 @@ from transcoder.utils import (
 def _format_fallback_title(raw_title: str) -> str:
     cleaned = raw_title.replace("_", " ").replace(".", " ").strip()
     return cleaned or raw_title
+
+
+def dry_run_analyze(
+    input_path: Path,
+    rewrap: bool = False,
+    target_size_mb_per_hour: float = DEFAULT_TARGET_SIZE_MB_PER_HOUR,
+    filename_pattern: str | None = DEFAULT_FILENAME_PATTERN,
+    convert_bitmap_subs: bool = True,
+    target_dir: Path | None = None,
+    media_type_override: str | None = None,
+) -> None:
+    """
+    Analyze a video file without processing (dry run mode).
+    
+    Shows what would happen if the file were processed:
+    - Detected metadata (show name, season, episode, etc.)
+    - Apple TV compatibility status
+    - Required actions (remux, transcode, etc.)
+    - Output path that would be generated
+    - Subtitle handling plan
+    
+    Args:
+        input_path: Path to input video file
+        rewrap: If True, would copy streams without transcoding
+        target_size_mb_per_hour: Target file size in MB per hour
+        filename_pattern: Optional manual pattern for parsing metadata from filename
+        convert_bitmap_subs: If True, would convert bitmap subtitles to text using OCR
+        target_dir: Optional target directory for output
+        media_type_override: Optional type override ("show" or "movie")
+    """
+    print(f"\n{'=' * 60}")
+    print(f"[DRY RUN] Analyzing: {input_path.name}")
+    print("=" * 60)
+    
+    if not input_path.exists():
+        print(f"Error: File not found: {input_path}")
+        return
+    
+    # Get file size
+    file_size_mb = input_path.stat().st_size / (1024 * 1024)
+    print(f"\nInput file: {input_path.name}")
+    print(f"File size: {file_size_mb:.1f} MB")
+    
+    # Detect metadata
+    print("\n--- Metadata Detection ---")
+    manual_pattern = filename_pattern or None
+    detection = detect_media_metadata(input_path, manual_pattern, media_type_override)
+    
+    if detection:
+        media_metadata = detection.metadata
+        if detection.media_type == MediaType.TV_SHOW and isinstance(media_metadata, EpisodeMetadata):
+            print(f"Type: TV Show")
+            print(f"Pattern: {detection.pattern_name}")
+            print(f"Series: {media_metadata.series_name}")
+            if media_metadata.season is not None:
+                print(f"Season: {media_metadata.season}")
+            if media_metadata.episode is not None:
+                print(f"Episode: {media_metadata.episode}")
+            if media_metadata.episode_title:
+                print(f"Episode Title: {media_metadata.episode_title}")
+        elif detection.media_type == MediaType.MOVIE and isinstance(media_metadata, MovieMetadata):
+            print(f"Type: Movie")
+            print(f"Pattern: {detection.pattern_name}")
+            print(f"Title: {media_metadata.movie_title}")
+            if media_metadata.year:
+                print(f"Year: {media_metadata.year}")
+    else:
+        print("Type: Unknown (would use filename as title)")
+        fallback_title = _format_fallback_title(input_path.stem)
+        print(f"Fallback title: {fallback_title}")
+    
+    # Probe video file
+    try:
+        probe_data = probe_video_file(input_path)
+    except Exception as e:
+        print(f"\nError probing video file: {e}")
+        return
+    
+    # Show stream information
+    print("\n--- Input Streams ---")
+    for stream in probe_data.get("streams", []):
+        stream_type = stream.get("codec_type", "unknown")
+        codec = stream.get("codec_name", "unknown")
+        index = stream.get("index", "?")
+        
+        if stream_type == "video":
+            width = stream.get("width", 0)
+            height = stream.get("height", 0)
+            fps_str = stream.get("r_frame_rate", "0/1")
+            try:
+                if "/" in fps_str:
+                    num, den = fps_str.split("/")
+                    fps = float(num) / float(den) if float(den) != 0 else 0
+                else:
+                    fps = float(fps_str)
+            except (ValueError, ZeroDivisionError):
+                fps = 0
+            profile = stream.get("profile", "")
+            print(f"  [{index}] Video: {codec.upper()}, {width}x{height}, {fps:.3f}fps, {profile}")
+        
+        elif stream_type == "audio":
+            channels = stream.get("channels", 0)
+            channel_layout = stream.get("channel_layout", "")
+            sample_rate = stream.get("sample_rate", "")
+            lang = stream.get("tags", {}).get("language", "und")
+            ch_info = channel_layout if channel_layout else f"{channels}ch"
+            print(f"  [{index}] Audio: {codec.upper()} {ch_info} ({lang})")
+        
+        elif stream_type == "subtitle":
+            lang = stream.get("tags", {}).get("language", "und")
+            title = stream.get("tags", {}).get("title", "")
+            sub_info = f"{codec.upper()} ({lang})"
+            if title:
+                sub_info += f" - {title}"
+            print(f"  [{index}] Subtitle: {sub_info}")
+    
+    # Apple TV Compatibility Check
+    compat = check_apple_tv_compatibility(probe_data, input_path)
+    print(format_compatibility_report(compat, input_path))
+    
+    # Determine what would happen
+    print("\n--- Processing Plan ---")
+    
+    if rewrap:
+        print("Mode: Rewrap (stream copy)")
+        if compat.video_action == "transcode":
+            print("  ⚠ Warning: Video requires transcoding but rewrap mode selected")
+            print("    Rewrap will copy incompatible video stream")
+    else:
+        print("Mode: Transcode")
+        print(f"  Target size: {target_size_mb_per_hour} MB/hour")
+        
+        # Calculate what bitrate would be used
+        duration = get_video_duration(probe_data)
+        if duration > 0:
+            _, video_bitrate_kbps = calculate_target_bitrate(duration, target_size_mb_per_hour)
+            print(f"  Target video bitrate: {int(video_bitrate_kbps)} kbps")
+            
+            # Estimate output size
+            estimated_size_mb = (video_bitrate_kbps * duration / 8) / 1024 + (128 * duration / 8) / 1024
+            print(f"  Estimated output size: ~{estimated_size_mb:.0f} MB")
+        
+        # Show encoder that would be used
+        encoder = detect_gpu_encoder()
+        encoder_name = {
+            "hevc_nvenc": "NVIDIA NVENC",
+            "hevc_amf": "AMD AMF",
+            "hevc_qsv": "Intel Quick Sync",
+            "hevc_videotoolbox": "Apple VideoToolbox",
+            "libx265": "CPU (libx265)",
+        }.get(encoder, encoder)
+        print(f"  Encoder: {encoder_name}")
+    
+    # Subtitle handling
+    print("\n--- Subtitle Handling ---")
+    text_subs = get_text_subtitle_streams(probe_data)
+    bitmap_subs = []
+    
+    try:
+        from transcoder.subtitles import probe_subtitle_streams
+        subtitle_streams_info = probe_subtitle_streams(input_path)
+        bitmap_subs = [s for s in subtitle_streams_info if s.is_image_based]
+    except Exception:
+        pass
+    
+    if text_subs:
+        print(f"  Text subtitles: {len(text_subs)} track(s) → will be preserved")
+    else:
+        print("  Text subtitles: None")
+    
+    if bitmap_subs:
+        if convert_bitmap_subs:
+            print(f"  Bitmap subtitles: {len(bitmap_subs)} track(s) → will be OCR'd to text")
+        else:
+            print(f"  Bitmap subtitles: {len(bitmap_subs)} track(s) → will be skipped (--noBitmapSubs)")
+    else:
+        print("  Bitmap subtitles: None")
+    
+    # Output path
+    print("\n--- Output ---")
+    output_path = get_output_path(input_path, target_dir, overwrite=False)
+    print(f"  Output path: {output_path}")
+    
+    # Summary
+    print("\n--- Summary ---")
+    if compat.overall_status == CompatibilityStatus.COMPATIBLE:
+        if rewrap:
+            print("✓ File is Apple TV compatible. Rewrap will preserve quality.")
+        else:
+            print("✓ File is Apple TV compatible, but transcoding was requested.")
+    elif compat.overall_status == CompatibilityStatus.NEEDS_REMUX:
+        print(f"⚠ File needs: {compat.get_summary()}")
+        if rewrap:
+            print("  Rewrap mode is appropriate for this file.")
+    else:
+        print(f"✗ File needs: {compat.get_summary()}")
+        if rewrap:
+            print("  ⚠ Consider using transcode mode instead of rewrap.")
+    
+    print("\n" + "=" * 60)
+    print("No files will be modified (dry run mode)")
+    print("=" * 60 + "\n")
+
+
+def dry_run_all(
+    source_path: Path,
+    rewrap: bool = False,
+    target_size_mb_per_hour: float = DEFAULT_TARGET_SIZE_MB_PER_HOUR,
+    filename_pattern: str | None = DEFAULT_FILENAME_PATTERN,
+    convert_bitmap_subs: bool = True,
+    target_dir: Path | None = None,
+    media_type_override: str | None = None,
+) -> None:
+    """
+    Analyze video files without processing (dry run mode for multiple files).
+    
+    Args:
+        source_path: Path to input video file or directory
+        rewrap: If True, would copy streams without transcoding
+        target_size_mb_per_hour: Target file size in MB per hour
+        filename_pattern: Optional manual pattern for parsing metadata
+        convert_bitmap_subs: If True, would convert bitmap subtitles
+        target_dir: Optional target directory for output
+        media_type_override: Optional type override
+    """
+    # Check if source is a file or directory
+    if source_path.is_file():
+        if source_path.suffix.lower() not in SUPPORTED_VIDEO_FORMATS:
+            supported_exts = ", ".join(sorted(SUPPORTED_VIDEO_FORMATS))
+            print(f"Error: {source_path.name} is not a supported video format.")
+            return
+        video_files = [source_path]
+    elif source_path.is_dir():
+        video_files = find_video_files(source_path)
+        if not video_files:
+            print(f"No supported video files found in {source_path}")
+            return
+        print(f"[DRY RUN] Found {len(video_files)} video file(s) to analyze\n")
+    else:
+        print(f"Error: {source_path} does not exist")
+        return
+    
+    for video_file in video_files:
+        dry_run_analyze(
+            video_file, rewrap, target_size_mb_per_hour, filename_pattern,
+            convert_bitmap_subs, target_dir, media_type_override
+        )
 
 
 def transcode_file(
