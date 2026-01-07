@@ -674,9 +674,19 @@ def build_installer(iscc_path: Optional[str] = None, build_mode: str = "lightwei
         print(f"Error: Installer script not found: {installer_script}")
         return False
     
+    # Calculate optimal thread count (CPU cores - 1)
+    cpu_count = multiprocessing.cpu_count()
+    thread_count = max(1, cpu_count - 1)  # At least 1 thread
+    
     # Inno Setup uses /D for defines
-    cmd = [iscc_compiler, f"/DBUILD_MODE={build_mode}", str(installer_script)]
+    cmd = [
+        iscc_compiler,
+        f"/DBUILD_MODE={build_mode}",
+        f"/DLZMA_THREADS={thread_count}",
+        str(installer_script)
+    ]
     print(f"Running: {' '.join(cmd)}")
+    print(f"Using {thread_count} threads for LZMA2 compression (CPU cores: {cpu_count})")
     result = subprocess.run(cmd, cwd=Path.cwd())
     
     if result.returncode != 0:

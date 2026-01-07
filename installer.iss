@@ -17,6 +17,10 @@
   #define BuildDescription "Lightweight build (OCR dependencies loaded on-demand)"
 #endif
 
+#ifndef LZMA_THREADS
+  #define LZMA_THREADS 4  ; Default fallback
+#endif
+
 #define MyAppName "One Shot Transcoder"
 #define MyAppFolder "oneShotTranscoder"
 #define MyAppVersion "0.1.0"
@@ -46,10 +50,11 @@ LicenseFile=LICENSE
 OutputDir=dist
 OutputBaseFilename={#InstallerName}
 
-; Compression - LZMA2 for best compression ratio
+; Compression - LZMA2 with parallel processing (7zip-style)
 Compression=lzma2/ultra64
 SolidCompression=yes
 LZMAUseSeparateProcess=yes
+LZMANumBlockThreads={#LZMA_THREADS}
 LZMADictionarySize=65536
 LZMANumFastBytes=273
 
