@@ -26,13 +26,28 @@ hiddenimports = [
     'PIL',
 ]
 
-# Collect setuptools data files for pkg_resources
+# Collect data files for packages that need them
+from PyInstaller.utils.hooks import collect_data_files
+
 try:
-    import setuptools
-    from PyInstaller.utils.hooks import collect_data_files
     setuptools_datas = collect_data_files('setuptools')
 except Exception:
     setuptools_datas = []
+
+# Babelfish needs its language/country data files
+try:
+    babelfish_datas = collect_data_files('babelfish')
+except Exception:
+    babelfish_datas = []
+
+# EasyOCR may need model data
+try:
+    easyocr_datas = collect_data_files('easyocr')
+except Exception:
+    easyocr_datas = []
+
+# Combine all data files
+package_datas = setuptools_datas + babelfish_datas + easyocr_datas
 
 # Modules to exclude (keeping all GPU/CUDA support)
 excludes = [
@@ -85,7 +100,7 @@ a = Analysis(
     ['transcoder/main.py'],
     pathex=[str(project_root)],
     binaries=[],
-    datas=(datas if datas else []) + setuptools_datas,
+    datas=(datas if datas else []) + package_datas,
     hiddenimports=hiddenimports,
     hookspath=['hooks'],
     hooksconfig={

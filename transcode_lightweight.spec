@@ -23,13 +23,22 @@ hiddenimports = [
     'PIL',
 ]
 
-# Collect setuptools data files for pkg_resources
+# Collect data files for packages that need them
+from PyInstaller.utils.hooks import collect_data_files
+
 try:
-    import setuptools
-    from PyInstaller.utils.hooks import collect_data_files
     setuptools_datas = collect_data_files('setuptools')
 except Exception:
     setuptools_datas = []
+
+# Babelfish needs its language/country data files
+try:
+    babelfish_datas = collect_data_files('babelfish')
+except Exception:
+    babelfish_datas = []
+
+# Combine all data files
+package_datas = setuptools_datas + babelfish_datas
 
 # Modules to exclude
 # Heavy deps (torch, easyocr, cv2) excluded - downloaded on-demand
@@ -70,7 +79,7 @@ a = Analysis(
     ['launcher.py'],  # Use launcher instead of main.py directly
     pathex=[str(project_root)],
     binaries=[],
-    datas=(datas if datas else []) + setuptools_datas,
+    datas=(datas if datas else []) + package_datas,
     hiddenimports=hiddenimports,
     hookspath=['hooks'],
     hooksconfig={
