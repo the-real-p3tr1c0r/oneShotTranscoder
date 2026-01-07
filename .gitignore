@@ -64,3 +64,4 @@ ffmpeg_binaries/
 *.tiff
 *.tif
 
+transcode_build.spec
