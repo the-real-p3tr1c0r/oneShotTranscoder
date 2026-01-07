@@ -56,7 +56,7 @@ excludes = [
     # Development/testing (not needed at runtime)
     'pkg_resources.py2_warn',
     'pytest', '_pytest',
-    'unittest', 'unittest.mock',
+    # Note: unittest is required by torch.fx passes during import
     'test', 'tests',
     'doctest',
     
