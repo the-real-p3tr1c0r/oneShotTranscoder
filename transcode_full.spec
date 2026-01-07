@@ -21,6 +21,8 @@ hiddenimports = [
     'babelfish',
     'pgsrip',
     'torch',
+    'torch.distributed',  # Required by torch
+    'torch.package',  # Required by torch._jit_internal
     'torchvision',
     'numpy',
     'PIL',
@@ -73,7 +75,7 @@ excludes = [
     'torch.onnx',  # ONNX export (not used)
     'torch.ao',  # Quantization/AO tools (not used for inference)
     'torch.fx',  # FX graph tools (not used)
-    'torch.package',  # Package tools
+    # Note: torch.package is required by torch._jit_internal, so cannot be excluded
     'torch.profiler',  # Profiling
     
     # TorchVision modules not needed
