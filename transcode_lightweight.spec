@@ -49,8 +49,26 @@ try:
 except Exception:
     pgsrip_datas = []
 
+# trakit data files
+try:
+    trakit_datas = collect_data_files('trakit')
+except Exception:
+    trakit_datas = []
+
+# guessit data files
+try:
+    guessit_datas = collect_data_files('guessit')
+except Exception:
+    guessit_datas = []
+
+# rebulk data files
+try:
+    rebulk_datas = collect_data_files('rebulk')
+except Exception:
+    rebulk_datas = []
+
 # Combine all data files
-package_datas = setuptools_datas + babelfish_datas + cleanit_datas + pgsrip_datas
+package_datas = setuptools_datas + babelfish_datas + cleanit_datas + pgsrip_datas + trakit_datas + guessit_datas + rebulk_datas
 
 # Modules to exclude
 # Heavy deps (torch, easyocr, cv2) excluded - downloaded on-demand
