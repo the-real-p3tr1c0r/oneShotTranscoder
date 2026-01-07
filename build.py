@@ -612,12 +612,13 @@ def create_zip_archive(build_dir: Path, output_path: Path) -> bool:
         return False
 
 
-def build_installer(iscc_path: Optional[str] = None, build_mode: str = "lightweight") -> bool:
+def build_installer(iscc_path: Optional[str] = None, build_mode: str = "lightweight", fast: bool = False) -> bool:
     """Build Inno Setup installer for Windows.
     
     Args:
         iscc_path: Optional path to ISCC.exe. If not provided, will search.
         build_mode: "full" or "lightweight" - which build to package
+        fast: If True, use parallel LZMA2 compression (faster but larger files)
     
     Returns:
         True if installer was built successfully, False otherwise
@@ -674,19 +675,20 @@ def build_installer(iscc_path: Optional[str] = None, build_mode: str = "lightwei
         print(f"Error: Installer script not found: {installer_script}")
         return False
     
-    # Calculate optimal thread count (CPU cores - 1)
-    cpu_count = multiprocessing.cpu_count()
-    thread_count = max(1, cpu_count - 1)  # At least 1 thread
-    
     # Inno Setup uses /D for defines
-    cmd = [
-        iscc_compiler,
-        f"/DBUILD_MODE={build_mode}",
-        f"/DLZMA_THREADS={thread_count}",
-        str(installer_script)
-    ]
+    cmd = [iscc_compiler, f"/DBUILD_MODE={build_mode}"]
+    
+    if fast:
+        # Calculate optimal thread count (CPU cores - 1) for parallel compression
+        cpu_count = multiprocessing.cpu_count()
+        thread_count = max(1, cpu_count - 1)  # At least 1 thread
+        cmd.append(f"/DLZMA_THREADS={thread_count}")
+        print(f"Fast compression mode: Using {thread_count} threads (CPU cores: {cpu_count})")
+    else:
+        print("Best compression mode: Using single-threaded LZMA2 (smallest files)")
+    
+    cmd.append(str(installer_script))
     print(f"Running: {' '.join(cmd)}")
-    print(f"Using {thread_count} threads for LZMA2 compression (CPU cores: {cpu_count})")
     result = subprocess.run(cmd, cwd=Path.cwd())
     
     if result.returncode != 0:
@@ -732,6 +734,11 @@ def main():
         action="store_true",
         help="Skip building executable, only create installer from existing build"
     )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Use parallel LZMA2 compression for faster installer builds (larger files)"
+    )
     args = parser.parse_args()
     
     print("=" * 60)
@@ -757,7 +764,7 @@ def main():
                 build_dir = Path("dist") / "transcode-lightweight"
             
             if build_dir.exists():
-                build_installer(args.iscc_path, installer_mode)
+                build_installer(args.iscc_path, installer_mode, args.fast)
             else:
                 print(f"\nError: {installer_mode} build not found at {build_dir}")
                 print(f"Build it first with: python build.py --mode {installer_mode}")
@@ -826,7 +833,7 @@ def main():
                 build_dir = Path("dist") / "transcode-lightweight"
             
             if build_dir.exists():
-                build_installer(args.iscc_path, installer_mode)
+                build_installer(args.iscc_path, installer_mode, args.fast)
             else:
                 print(f"\nWarning: {installer_mode} build not found. Skipping installer.")
                 print(f"Build it first with --mode {installer_mode}")
