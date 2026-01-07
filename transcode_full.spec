@@ -68,7 +68,6 @@ excludes = [
     # PyTorch modules not needed for inference
     'torch.testing',
     'torch.utils.tensorboard',
-    'torch.distributed',
     'torch.utils.bottleneck',
     'torch.utils.benchmark',
     'torch.onnx',  # ONNX export (not used)
