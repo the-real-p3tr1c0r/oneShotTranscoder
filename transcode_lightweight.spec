@@ -107,7 +107,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,  # Disabled: we compress in parallel after build
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -123,7 +123,7 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,  # Disabled: we compress in parallel after build
     upx_exclude=[],
     name='transcode-lightweight',
 )

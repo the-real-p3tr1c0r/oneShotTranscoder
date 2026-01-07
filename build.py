@@ -23,8 +23,10 @@ import sys
 import tempfile
 import urllib.request
 import zipfile
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
+import multiprocessing
 
 # FFmpeg download URLs (using static builds from BtbN/ffmpeg-builds)
 FFMPEG_URLS = {
@@ -345,6 +347,151 @@ def update_spec_file(ffmpeg_dir: Path, spec_name: str = "transcode.spec") -> Pat
     return modified_spec
 
 
+def find_upx() -> Optional[str]:
+    """Find UPX executable.
+    
+    Returns:
+        Path to UPX executable, or None if not found
+    """
+    # Check common locations
+    upx_names = ["upx", "upx.exe"]
+    
+    # Check PATH
+    for name in upx_names:
+        upx_path = shutil.which(name)
+        if upx_path:
+            return upx_path
+    
+    # Check PyInstaller's UPX location (if bundled)
+    try:
+        import PyInstaller.utils.win32.versioninfo
+        pyinstaller_dir = Path(PyInstaller.__file__).parent
+        for name in upx_names:
+            upx_path = pyinstaller_dir / "utils" / "win32" / name
+            if upx_path.exists():
+                return str(upx_path)
+    except Exception:
+        pass
+    
+    return None
+
+
+def _compress_binary_with_upx(args: tuple[str, str]) -> tuple[bool, str]:
+    """Compress a single binary with UPX (internal function for multiprocessing).
+    
+    Args:
+        args: Tuple of (upx_path, binary_path_str)
+    
+    Returns:
+        Tuple of (success, message)
+    """
+    upx_path, binary_path_str = args
+    binary_path = Path(binary_path_str)
+    
+    try:
+        # UPX options: --best for best compression, --lzma for better ratio
+        result = subprocess.run(
+            [upx_path, "--best", "--lzma", binary_path_str],
+            capture_output=True,
+            text=True,
+            timeout=300,  # 5 minute timeout per binary
+        )
+        
+        if result.returncode == 0:
+            return True, f"Compressed {binary_path.name}"
+        else:
+            # UPX returns non-zero for files it can't compress (e.g., already compressed)
+            # This is not necessarily an error
+            stderr_lower = result.stderr.lower()
+            if "already compressed" in stderr_lower or "not compressible" in stderr_lower:
+                return True, f"Skipped {binary_path.name} (already compressed/not compressible)"
+            return False, f"Failed to compress {binary_path.name}: {result.stderr[:100]}"
+    except subprocess.TimeoutExpired:
+        return False, f"Timeout compressing {binary_path.name}"
+    except Exception as e:
+        return False, f"Error compressing {binary_path.name}: {str(e)[:100]}"
+
+
+def compress_binaries_parallel(build_dir: Path, upx_path: Optional[str] = None) -> bool:
+    """Compress all binaries in build directory using UPX in parallel.
+    
+    Args:
+        build_dir: Directory containing built binaries
+        upx_path: Path to UPX executable (if None, will try to find it)
+    
+    Returns:
+        True if compression completed (with or without errors), False if UPX not found
+    """
+    if upx_path is None:
+        upx_path = find_upx()
+    
+    if upx_path is None:
+        print("Warning: UPX not found. Skipping binary compression.")
+        print("Install UPX from https://upx.github.io/ for smaller binaries.")
+        return False
+    
+    print(f"\nCompressing binaries with UPX (parallel)...")
+    print(f"Using UPX: {upx_path}")
+    
+    # Find all binaries to compress
+    # UPX can compress: .exe, .dll, .so, .dylib, and other executables
+    binary_extensions = {".exe", ".dll", ".so", ".dylib"}
+    binaries = []
+    
+    for file_path in build_dir.rglob("*"):
+        if file_path.is_file() and file_path.suffix.lower() in binary_extensions:
+            # Skip files that are too small (not worth compressing)
+            if file_path.stat().st_size > 1024:  # Skip files < 1KB
+                binaries.append(file_path)
+    
+    if not binaries:
+        print("No binaries found to compress.")
+        return True
+    
+    print(f"Found {len(binaries)} binaries to compress...")
+    
+    # Determine number of workers (use CPU count, but cap at reasonable number)
+    num_workers = min(multiprocessing.cpu_count(), len(binaries), 16)
+    
+    # Compress binaries in parallel
+    compressed_count = 0
+    skipped_count = 0
+    failed_count = 0
+    
+    # Prepare arguments for multiprocessing (convert Path to string for pickling)
+    compression_args = [(upx_path, str(binary)) for binary in binaries]
+    
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        # Submit all compression tasks
+        future_to_binary = {
+            executor.submit(_compress_binary_with_upx, args): binaries[i]
+            for i, args in enumerate(compression_args)
+        }
+        
+        # Process results as they complete
+        for future in as_completed(future_to_binary):
+            binary = future_to_binary[future]
+            try:
+                success, message = future.result()
+                if success:
+                    if "Skipped" in message:
+                        skipped_count += 1
+                    else:
+                        compressed_count += 1
+                    if compressed_count % 10 == 0 or skipped_count % 10 == 0:
+                        print(f"  Progress: {compressed_count} compressed, {skipped_count} skipped, {failed_count} failed", end='\r')
+                else:
+                    failed_count += 1
+                    print(f"\n  Warning: {message}")
+            except Exception as e:
+                failed_count += 1
+                print(f"\n  Error compressing {binary.name}: {e}")
+    
+    print(f"\nCompression complete: {compressed_count} compressed, {skipped_count} skipped, {failed_count} failed")
+    
+    return True
+
+
 def build_executable(spec_file: Path, build_mode: str = "full") -> None:
     """Build the executable using PyInstaller.
     
@@ -373,16 +520,22 @@ def build_executable(spec_file: Path, build_mode: str = "full") -> None:
         print("Error: PyInstaller build failed")
         sys.exit(1)
     
-    print("Build completed successfully!")
+    print("PyInstaller build completed!")
     exe_ext = ".exe" if platform.system() == "Windows" else ""
     
     if build_mode == "full":
-        exe_path = Path("dist") / "transcode" / f"transcode{exe_ext}"
+        output_dir = Path("dist") / "transcode"
+        exe_path = output_dir / f"transcode{exe_ext}"
     else:
-        exe_path = Path("dist") / "transcode-lightweight" / f"transcode{exe_ext}"
+        output_dir = Path("dist") / "transcode-lightweight"
+        exe_path = output_dir / f"transcode{exe_ext}"
     
     if exe_path.exists():
         print(f"Executable location: {exe_path.resolve()}")
+        
+        # Compress binaries in parallel with UPX
+        if output_dir.exists():
+            compress_binaries_parallel(output_dir)
     else:
         print("Warning: Executable not found at expected location")
 
