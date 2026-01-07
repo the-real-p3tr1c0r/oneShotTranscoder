@@ -48,8 +48,20 @@ try:
 except Exception:
     easyocr_datas = []
 
+# Cleanit data files
+try:
+    cleanit_datas = collect_data_files('cleanit')
+except Exception:
+    cleanit_datas = []
+
+# pgsrip data files
+try:
+    pgsrip_datas = collect_data_files('pgsrip')
+except Exception:
+    pgsrip_datas = []
+
 # Combine all data files
-package_datas = setuptools_datas + babelfish_datas + easyocr_datas
+package_datas = setuptools_datas + babelfish_datas + easyocr_datas + cleanit_datas + pgsrip_datas
 
 # Modules to exclude
 # SYSTEMATIC FIX: We stop manually excluding anything for the full build.

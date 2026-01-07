@@ -37,8 +37,20 @@ try:
 except Exception:
     babelfish_datas = []
 
+# Cleanit data files
+try:
+    cleanit_datas = collect_data_files('cleanit')
+except Exception:
+    cleanit_datas = []
+
+# pgsrip data files
+try:
+    pgsrip_datas = collect_data_files('pgsrip')
+except Exception:
+    pgsrip_datas = []
+
 # Combine all data files
-package_datas = setuptools_datas + babelfish_datas
+package_datas = setuptools_datas + babelfish_datas + cleanit_datas + pgsrip_datas
 
 # Modules to exclude
 # Heavy deps (torch, easyocr, cv2) excluded - downloaded on-demand
