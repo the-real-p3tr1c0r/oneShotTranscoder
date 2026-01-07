@@ -90,7 +90,6 @@ excludes = [
     'pandas',  # Data analysis (not used)
     'scipy.tests', 'numpy.tests',
     'setuptools._distutils',
-    'distutils',
     'xmlrpc',
     'pydoc', 'pydoc_data',
 ]

@@ -69,7 +69,6 @@ excludes = [
     'pandas',
     'scipy.tests', 'numpy.tests',
     'setuptools._distutils',
-    'distutils',
     'xmlrpc',
     'pydoc', 'pydoc_data',
 ]
