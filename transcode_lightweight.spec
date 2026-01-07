@@ -31,6 +31,40 @@ try:
 except Exception:
     setuptools_datas = []
 
+# Modules to exclude
+# Heavy deps (torch, easyocr, cv2) excluded - downloaded on-demand
+excludes = [
+    # OCR dependencies (downloaded on-demand)
+    'torch', 'torchvision', 'easyocr', 'cv2',
+    
+    # Development/testing (not needed at runtime)
+    'pkg_resources.py2_warn',
+    'pytest', '_pytest',
+    'unittest', 'unittest.mock',
+    'test', 'tests',
+    'doctest',
+    
+    # Documentation tools
+    'sphinx', 'docutils', 'rst',
+    
+    # Interactive/notebook environments
+    'IPython', 'ipykernel', 'ipywidgets',
+    'notebook', 'jupyter', 'jupyter_client', 'jupyter_core',
+    
+    # GUI toolkits (not used - CLI only)
+    'tkinter', '_tkinter',
+    'PyQt5', 'PyQt6', 'PySide2', 'PySide6',
+    
+    # Other unused
+    'matplotlib',
+    'pandas',
+    'scipy.tests', 'numpy.tests',
+    'setuptools._distutils',
+    'distutils',
+    'xmlrpc',
+    'pydoc', 'pydoc_data',
+]
+
 # Collect all Python files from transcoder package
 a = Analysis(
     ['launcher.py'],  # Use launcher instead of main.py directly
@@ -45,7 +79,7 @@ a = Analysis(
         },
     },
     runtime_hooks=['hooks/pyi_rth_importlib_metadata.py'],
-    excludes=['pkg_resources.py2_warn', 'torch', 'torchvision', 'easyocr', 'cv2'],
+    excludes=excludes,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -85,6 +119,7 @@ coll = COLLECT(
     upx_exclude=[],
     name='transcode-lightweight',
 )
+
 
 
 

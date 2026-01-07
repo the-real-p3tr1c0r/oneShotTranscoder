@@ -34,6 +34,52 @@ try:
 except Exception:
     setuptools_datas = []
 
+# Modules to exclude (keeping all GPU/CUDA support)
+excludes = [
+    # Development/testing (not needed at runtime)
+    'pkg_resources.py2_warn',
+    'pytest', '_pytest',
+    'unittest', 'unittest.mock',
+    'test', 'tests',
+    'doctest',
+    
+    # Documentation tools
+    'sphinx', 'docutils', 'rst',
+    
+    # Interactive/notebook environments
+    'IPython', 'ipykernel', 'ipywidgets',
+    'notebook', 'jupyter', 'jupyter_client', 'jupyter_core',
+    
+    # PyTorch modules not needed for inference
+    'torch.testing',
+    'torch.utils.tensorboard',
+    'torch.distributed',
+    'torch.utils.bottleneck',
+    'torch.utils.benchmark',
+    'torch.onnx',  # ONNX export (not used)
+    'torch.ao',  # Quantization/AO tools (not used for inference)
+    'torch.fx',  # FX graph tools (not used)
+    'torch.package',  # Package tools
+    'torch.profiler',  # Profiling
+    
+    # TorchVision modules not needed
+    'torchvision.datasets',  # Dataset loaders
+    'torchvision.prototype',  # Prototype features
+    
+    # GUI toolkits (not used - CLI only)
+    'tkinter', '_tkinter',
+    'PyQt5', 'PyQt6', 'PySide2', 'PySide6',
+    
+    # Other unused
+    'matplotlib',  # Plotting (not used at runtime)
+    'pandas',  # Data analysis (not used)
+    'scipy.tests', 'numpy.tests',
+    'setuptools._distutils',
+    'distutils',
+    'xmlrpc',
+    'pydoc', 'pydoc_data',
+]
+
 # Collect all Python files from transcoder package
 a = Analysis(
     ['transcoder/main.py'],
@@ -48,7 +94,7 @@ a = Analysis(
         },
     },
     runtime_hooks=['hooks/pyi_rth_importlib_metadata.py'],
-    excludes=['pkg_resources.py2_warn'],
+    excludes=excludes,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -88,6 +134,7 @@ coll = COLLECT(
     upx_exclude=[],
     name='transcode',
 )
+
 
 
 
