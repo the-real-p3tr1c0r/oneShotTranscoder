@@ -1,18 +1,20 @@
 #!/bin/bash
 set -euo pipefail
 
-INSTALL_LOCATION="/usr/local/share/transcoder"
+APP_BUNDLE="/Applications/oneShotTranscoder.app"
 BIN_LINK="/usr/local/bin/transcode"
 PKG_ID="com.transcoder.pkg"
 
 # Remove symlink if present
 if [ -L "$BIN_LINK" ] || [ -f "$BIN_LINK" ]; then
   rm -f "$BIN_LINK" || true
+  echo "Removed symlink: $BIN_LINK"
 fi
 
-# Remove installed files
-if [ -d "$INSTALL_LOCATION" ]; then
-  rm -rf "$INSTALL_LOCATION" || true
+# Remove app bundle (if not already deleted by user)
+if [ -d "$APP_BUNDLE" ]; then
+  rm -rf "$APP_BUNDLE" || true
+  echo "Removed app bundle: $APP_BUNDLE"
 fi
 
 # Best-effort: forget package receipt if it exists
@@ -22,4 +24,3 @@ fi
 
 echo "One Shot Transcoder uninstalled."
 exit 0
-

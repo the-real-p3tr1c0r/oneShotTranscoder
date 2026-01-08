@@ -1,25 +1,45 @@
 #!/bin/bash
 set -euo pipefail
 
-INSTALL_LOCATION="/usr/local/share/transcoder"
+APP_BUNDLE="/Applications/oneShotTranscoder.app"
 BIN_LINK="/usr/local/bin/transcode"
-
-# Ensure target directories exist
-mkdir -p "$(dirname "$BIN_LINK")"
-
-# Create/replace symlink so `transcode` is on PATH
-ln -sf "${INSTALL_LOCATION}/transcode" "$BIN_LINK"
+EXECUTABLE="${APP_BUNDLE}/Contents/MacOS/transcode"
 
 # Ensure reasonable permissions
-chmod -R 755 "$INSTALL_LOCATION" || true
-chmod 755 "$BIN_LINK" || true
+chmod -R 755 "$APP_BUNDLE" || true
 
 # Basic verification
-if [ ! -x "${INSTALL_LOCATION}/transcode" ]; then
-  echo "ERROR: Expected executable not found at ${INSTALL_LOCATION}/transcode"
+if [ ! -x "$EXECUTABLE" ]; then
+  echo "ERROR: Expected executable not found at $EXECUTABLE"
   exit 1
 fi
 
-echo "One Shot Transcoder installed. You can now run: transcode --about"
-exit 0
+# Optionally create symlink for command-line access
+# Check if user wants to create symlink (via environment variable set by installer choice)
+# For now, we'll create it if we have permissions, but it's optional
+if [ "${CREATE_SYMLINK:-1}" = "1" ]; then
+    if [ -w "$(dirname "$BIN_LINK")" ] || [ "$EUID" -eq 0 ]; then
+        mkdir -p "$(dirname "$BIN_LINK")"
+        ln -sf "$EXECUTABLE" "$BIN_LINK"
+        chmod 755 "$BIN_LINK" || true
+        echo "Symlink created at $BIN_LINK for command-line access"
+        echo "You can remove it later with: rm $BIN_LINK"
+    else
+        echo "Note: Could not create symlink (requires admin)."
+        echo "Access via: $EXECUTABLE"
+    fi
+else
+    echo "Symlink creation skipped (optional component)"
+fi
 
+echo ""
+echo "One Shot Transcoder installed successfully!"
+echo ""
+echo "Access the application:"
+echo "  Command line: $EXECUTABLE"
+if [ -L "$BIN_LINK" ]; then
+    echo "  Or via symlink: transcode"
+fi
+echo "  Or drag the app from Applications to Terminal"
+echo ""
+exit 0

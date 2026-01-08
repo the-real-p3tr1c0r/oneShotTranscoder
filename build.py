@@ -404,11 +404,16 @@ def ensure_upx() -> Optional[str]:
     Returns:
         Path to UPX executable, or None if download failed or platform unsupported
     """
+    system, arch = get_platform_info()
+    
+    # Skip UPX on macOS - it causes code signing issues and PyInstaller doesn't use it
+    if system == "Darwin":
+        return None
+    
     upx_path = find_upx()
     if upx_path:
         return upx_path
         
-    system, arch = get_platform_info()
     if system not in UPX_URLS or arch not in UPX_URLS[system]:
         print(f"Warning: Automated UPX download not supported for {system} {arch}")
         return None
@@ -507,6 +512,12 @@ def compress_binaries_parallel(build_dir: Path, upx_path: Optional[str] = None) 
     Returns:
         True if compression completed (with or without errors), False if UPX not found
     """
+    system, _ = get_platform_info()
+    
+    # Skip UPX on macOS - it causes code signing issues and breaks .dylib validation
+    if system == "Darwin":
+        return False
+    
     if upx_path is None:
         upx_path = ensure_upx()
     
@@ -932,19 +943,55 @@ def build_pkg_installer(build_mode: str = "lightweight") -> bool:
         pkg_root.mkdir()
         scripts_dir.mkdir()
         
-        # We'll install to /usr/local/share/transcoder
-        install_location = "/usr/local/share/transcoder"
-        payload_dir = pkg_root / "usr" / "local" / "share" / "transcoder"
-        payload_dir.mkdir(parents=True)
+        # Create app bundle structure in Applications
+        app_name = "oneShotTranscoder.app"
+        app_bundle = pkg_root / "Applications" / app_name
+        contents_dir = app_bundle / "Contents"
+        macos_dir = contents_dir / "MacOS"
+        resources_dir = contents_dir / "Resources"
         
-        # Copy build contents
-        print(f"Copying files to package root...")
-        shutil.copytree(build_dir, payload_dir, dirs_exist_ok=True)
+        # Create app bundle directories
+        macos_dir.mkdir(parents=True)
+        resources_dir.mkdir(parents=True)
         
-        # Copy additional files
-        for file_name in ["LICENSE", "NOTICE.md", "THIRD_PARTY_LICENSES.md", "transcode.bat"]:
+        # Copy build contents to MacOS directory (where executables go)
+        print(f"Copying files to app bundle...")
+        shutil.copytree(build_dir, macos_dir, dirs_exist_ok=True)
+        
+        # Copy additional files to Resources
+        for file_name in ["LICENSE", "NOTICE.md", "THIRD_PARTY_LICENSES.md"]:
             if Path(file_name).exists():
-                shutil.copy2(file_name, payload_dir)
+                shutil.copy2(file_name, resources_dir)
+        
+        # Create Info.plist for app bundle
+        info_plist_content = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>transcode</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.transcoder.app</string>
+    <key>CFBundleName</key>
+    <string>One Shot Transcoder</string>
+    <key>CFBundleVersion</key>
+    <string>0.1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>10.15</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>"""
+        
+        info_plist_path = contents_dir / "Info.plist"
+        with open(info_plist_path, 'w', encoding='utf-8') as f:
+            f.write(info_plist_content)
         
         # Copy installer scripts from repo
         repo_scripts_dir = Path("pkg_scripts")
@@ -957,9 +1004,34 @@ def build_pkg_installer(build_mode: str = "lightweight") -> bool:
         shutil.copy2(postinstall_src, postinstall_dst)
         os.chmod(postinstall_dst, 0o755)
         
-        # Create postuninstall script (not directly used by PKG but good to have)
-        # Note: macOS PKGs don't have a standard post-uninstall hook like Inno Setup.
-        # Users usually delete the files manually or use pkgutil --forget.
+        # Copy postuninstall script
+        postuninstall_src = repo_scripts_dir / "postuninstall"
+        if postuninstall_src.exists():
+            postuninstall_dst = scripts_dir / "postuninstall"
+            shutil.copy2(postuninstall_src, postuninstall_dst)
+            os.chmod(postuninstall_dst, 0o755)
+        
+        # Create component.plist to mark as application
+        component_plist = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+    <dict>
+        <key>BundleIsRelocatable</key>
+        <false/>
+        <key>BundleIsVersionChecked</key>
+        <true/>
+        <key>BundleHasStrictIdentifier</key>
+        <true/>
+        <key>RootRelativeBundlePath</key>
+        <string>Applications/{app_name}</string>
+    </dict>
+</array>
+</plist>"""
+        
+        component_plist_path = tmp_path / "component.plist"
+        with open(component_plist_path, 'w', encoding='utf-8') as f:
+            f.write(component_plist)
         
         # Build component package
         component_pkg = tmp_path / "component.pkg"
@@ -971,6 +1043,7 @@ def build_pkg_installer(build_mode: str = "lightweight") -> bool:
             "--version", "0.1.0",
             "--install-location", "/",
             "--scripts", str(scripts_dir),
+            "--component-plist", str(component_plist_path),
             str(component_pkg)
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -978,12 +1051,38 @@ def build_pkg_installer(build_mode: str = "lightweight") -> bool:
             print(f"Error during pkgbuild: {result.stderr}")
             return False
             
-        # Build distribution package
+        # Create distribution.xml for productbuild (enables System Settings integration)
+        distribution_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<installer-gui-script minSpecVersion="1">
+    <title>One Shot Transcoder</title>
+    <organization>com.transcoder</organization>
+    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+    <options customize="never" require-scripts="false" rootVolumeOnly="true" hostArchitectures="arm64,x86_64"/>
+    <pkg-ref id="com.transcoder.pkg"/>
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.transcoder.pkg"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="com.transcoder.pkg" visible="false">
+        <pkg-ref id="com.transcoder.pkg"/>
+    </choice>
+    <pkg-ref id="com.transcoder.pkg" version="0.1.0" onConclusion="none">component.pkg</pkg-ref>
+</installer-gui-script>"""
+        
+        distribution_xml_path = tmp_path / "distribution.xml"
+        with open(distribution_xml_path, 'w', encoding='utf-8') as f:
+            f.write(distribution_xml)
+        
+        # Build distribution package with proper metadata for System Settings
         final_pkg = Path("dist") / installer_name
         print("Running productbuild...")
         cmd = [
             "productbuild",
-            "--package", str(component_pkg),
+            "--distribution", str(distribution_xml_path),
+            "--package-path", str(tmp_path),
+            "--resources", str(resources_dir),
             str(final_pkg)
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -995,6 +1094,7 @@ def build_pkg_installer(build_mode: str = "lightweight") -> bool:
             size_mb = final_pkg.stat().st_size / (1024 * 1024)
             print(f"\n✓ macOS PKG created successfully: {final_pkg.resolve()}")
             print(f"  Size: {size_mb:.1f} MB")
+            print(f"  Installs to: /Applications/{app_name}")
             return True
             
     return False
@@ -1183,7 +1283,10 @@ def main():
     print("Step 1: Preparing binaries...")
     try:
         ffmpeg_dir = prepare_ffmpeg_binaries()
-        ensure_upx()
+        # UPX is skipped on macOS (causes code signing issues)
+        system, _ = get_platform_info()
+        if system != "Darwin":
+            ensure_upx()
     except Exception as e:
         print(f"Error preparing binaries: {e}")
         print("\nNote: You can manually place binaries in their respective directories:")
