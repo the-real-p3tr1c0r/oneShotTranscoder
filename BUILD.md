@@ -8,7 +8,7 @@ The build system supports multiple packaging options:
 
 1. **Full Build**: Self-contained executable with all dependencies (including OCR libraries)
 2. **Lightweight Build**: Smaller executable with on-demand dependency loading
-3. **Windows Installer**: Professional installer that registers the application in Control Panel and adds to PATH
+3. **Windows/macOS Installers**: Professional installers that register the application in the system.
 
 All builds:
 - Bundle ffmpeg and ffprobe binaries (no external installation needed)
@@ -21,6 +21,7 @@ All builds:
 2. **PyInstaller**: Install with `pip install pyinstaller`
 3. **Internet connection** (for downloading ffmpeg binaries during build)
 4. **Inno Setup** (Windows only, for installer): `winget install JRSoftware.InnoSetup` or download from https://jrsoftware.org/isdl.php
+5. **Xcode Command Line Tools** (macOS only, for PKG installer): `xcode-select --install`
 
 ## Quick Start
 
@@ -56,9 +57,9 @@ Build both versions:
 python build.py --mode both
 ```
 
-### Windows Installer
+### Windows/macOS Installers
 
-To create Windows installers that register in Control Panel:
+To create installers that register in the system:
 
 **Lightweight installer:**
 ```bash
@@ -79,20 +80,17 @@ Smoke tests:
 - When `--installer` is used, the build script first runs a **dist smoke test** (A) by executing:
   - `transcode --about`
   - `transcode --dry-run`
-- Only if (A) passes, it builds the installer and then performs an **installer payload validation** (B) by extracting the installer to a temp directory (7-Zip if available, otherwise silent temp install) and running the same commands.
+- Only if (A) passes, it builds the installer and then performs an **installer payload validation** (B) by extracting the installer to a temp directory (7-Zip if available on Windows, otherwise silent temp install) and running the same commands.
 
 The installers will:
-- Install to `C:\Program Files\Transcoder\`
-- Register in Windows Control Panel (Apps & Features)
-- Optionally add to system PATH
-- Create Start Menu shortcuts
-- Provide uninstaller
+- Windows: Install to `C:\Program Files\oneShotTranscoder\`, register in Control Panel, optionally add to PATH, create Start Menu shortcuts, provide uninstaller.
+- macOS: Install to `/usr/local/share/transcoder/`, create symlink in `/usr/local/bin/`, register with macOS for uninstallation via System Settings.
 
 **Output files:**
-- `dist/transcoder-setup.exe` (lightweight build)
-- `dist/transcoder-setup-full.exe` (full build)
+- Windows: `dist/transcoder-setup.exe` (lightweight), `dist/transcoder-setup-full.exe` (full)
+- macOS: `dist/transcoder.pkg` (lightweight), `dist/transcoder-full.pkg` (full)
 
-**Note**: Requires Inno Setup to be installed. Install with `winget install JRSoftware.InnoSetup`
+**Note**: Requires Inno Setup (Windows) or Xcode Command Line Tools (macOS) to be installed.
 
 ## Build Process
 
@@ -138,24 +136,24 @@ After successful build:
 - **Size**: ~500 MB - 2 GB (includes all OCR dependencies)
 - **OCR Support**: Fully self-contained
 
-### Windows Installer
+### Windows/macOS Installers
 
 **Lightweight Installer:**
-- **Output**: `dist/transcoder-setup.exe`
+- **Output**: `dist/transcoder-setup.exe` (Windows) or `dist/transcoder.pkg` (macOS)
 - **Size**: ~50-100 MB (lightweight build packaged)
 - **Features**: 
-  - Control Panel registration
-  - PATH integration (optional)
-  - Start Menu shortcuts
+  - System registration
+  - PATH integration
+  - Start Menu/Application folder integration
   - Uninstaller
 
 **Full Installer:**
-- **Output**: `dist/transcoder-setup-full.exe`
+- **Output**: `dist/transcoder-setup-full.exe` (Windows) or `dist/transcoder-full.pkg` (macOS)
 - **Size**: ~500 MB - 2 GB (full build packaged)
 - **Features**: 
-  - Control Panel registration
-  - PATH integration (optional)
-  - Start Menu shortcuts
+  - System registration
+  - PATH integration
+  - Start Menu/Application folder integration
   - Uninstaller
   - All OCR dependencies included (no system Python required)
 
@@ -219,10 +217,10 @@ The built executable can be distributed independently:
 - No FFmpeg installation required on target system
 - License documents placed next to the executable satisfy GPL/FFmpeg attribution requirements
 
-### Windows Installer (Recommended)
+### Installers (Recommended)
 The installer provides the best user experience:
 - Professional installation process
-- Appears in Windows Control Panel
+- Appears in Windows Control Panel or macOS System Settings
 - Easy uninstallation
 - PATH integration for command-line access
 - System-wide installation
@@ -230,7 +228,7 @@ The installer provides the best user experience:
 **Lightweight Build Notes**:
 - First OCR use may require downloading dependencies (~2GB for torch/easyocr)
 - Requires system Python 3.10+ for dependency installation
-- Dependencies are cached in `%LOCALAPPDATA%\transcoder\` after first use
+- Dependencies are cached in `%LOCALAPPDATA%\transcoder\` (Windows) or `~/Library/Caches/transcoder/` (macOS) after first use
 
 ## License Compliance Checklist
 
@@ -242,5 +240,3 @@ The installer provides the best user experience:
    and direct recipients to the FFmpeg sources referenced in `NOTICE.md`.
 
 **Note**: The executable is platform-specific. Build separate executables for each target platform.
-
-
