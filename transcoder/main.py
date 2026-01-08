@@ -364,7 +364,7 @@ def main() -> None:
                     for video_file in video_files:
                         dry_run_analyze(
                             video_file,
-                            rewrap=args.rewrap,
+                            rewrap=rewrap_mode,
                             target_size_mb_per_hour=args.targetSizePerHour,
                             filename_pattern=args.fileNamePattern,
                             convert_bitmap_subs=not args.noBitmapSubs,

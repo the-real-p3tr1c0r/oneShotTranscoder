@@ -679,17 +679,13 @@ def validate_installer_payload(installer_path: Path, build_mode: str, iscc_path:
         seven_zip = _find_7zip()
         used_validation_installer = False
         if seven_zip:
-            print(f"Extracting installer with 7-Zip: {seven_zip}")
+            print(f"Attempting installer extraction with 7-Zip: {seven_zip}")
             extract_cmd = [seven_zip, "x", str(installer_path), f"-o{tmp_dir}", "-y"]
             result = subprocess.run(extract_cmd, capture_output=True, text=True)
             if result.returncode != 0:
-                print("Installer extraction failed:")
-                if result.stdout:
-                    print(result.stdout)
-                if result.stderr:
-                    print(result.stderr)
                 # Many Inno Setup installers are not extractable by 7-Zip. Fall back to
                 # a validation-only installer that does a non-admin temp install.
+                print("7-Zip could not extract this installer (common for Inno Setup). Falling back to validation install.")
                 seven_zip = None
 
         if not seven_zip:
@@ -804,6 +800,119 @@ def create_zip_archive(build_dir: Path, output_path: Path) -> bool:
     except Exception as e:
         print(f"Error creating ZIP: {e}")
         return False
+
+
+def build_pkg_installer(build_mode: str = "lightweight") -> bool:
+    """Build macOS PKG installer.
+    
+    Args:
+        build_mode: "full" or "lightweight" - which build to package
+    
+    Returns:
+        True if installer was built successfully, False otherwise
+    """
+    system, _ = get_platform_info()
+    if system != "Darwin":
+        print("PKG installer generation is only supported on macOS")
+        return False
+    
+    # Check if necessary tools are available
+    for tool in ["pkgbuild", "productbuild"]:
+        if not shutil.which(tool):
+            print(f"Error: {tool} not found. Ensure Xcode command line tools are installed.")
+            return False
+    
+    # Determine directories and names
+    if build_mode == "full":
+        build_dir = Path("dist") / "transcode"
+        installer_name = "transcoder-full.pkg"
+    else:
+        build_dir = Path("dist") / "transcode-lightweight"
+        installer_name = "transcoder.pkg"
+    
+    if not build_dir.exists():
+        print(f"Error: {build_mode} build not found. Build it first with --mode {build_mode}")
+        return False
+    
+    print("\n" + "=" * 60)
+    print(f"Building macOS PKG installer for {build_mode} build...")
+    print("=" * 60)
+    
+    with tempfile.TemporaryDirectory(prefix="transcoder-pkg-") as tmp:
+        tmp_path = Path(tmp)
+        pkg_root = tmp_path / "root"
+        scripts_dir = tmp_path / "scripts"
+        
+        # Create directories
+        pkg_root.mkdir()
+        scripts_dir.mkdir()
+        
+        # We'll install to /usr/local/share/transcoder
+        install_location = "/usr/local/share/transcoder"
+        payload_dir = pkg_root / "usr" / "local" / "share" / "transcoder"
+        payload_dir.mkdir(parents=True)
+        
+        # Copy build contents
+        print(f"Copying files to package root...")
+        shutil.copytree(build_dir, payload_dir, dirs_exist_ok=True)
+        
+        # Copy additional files
+        for file_name in ["LICENSE", "NOTICE.md", "THIRD_PARTY_LICENSES.md", "transcode.bat"]:
+            if Path(file_name).exists():
+                shutil.copy2(file_name, payload_dir)
+        
+        # Copy installer scripts from repo
+        repo_scripts_dir = Path("pkg_scripts")
+        postinstall_src = repo_scripts_dir / "postinstall"
+        if not postinstall_src.exists():
+            print(f"Error: missing PKG postinstall script at {postinstall_src}")
+            return False
+
+        postinstall_dst = scripts_dir / "postinstall"
+        shutil.copy2(postinstall_src, postinstall_dst)
+        os.chmod(postinstall_dst, 0o755)
+        
+        # Create postuninstall script (not directly used by PKG but good to have)
+        # Note: macOS PKGs don't have a standard post-uninstall hook like Inno Setup.
+        # Users usually delete the files manually or use pkgutil --forget.
+        
+        # Build component package
+        component_pkg = tmp_path / "component.pkg"
+        print("Running pkgbuild...")
+        cmd = [
+            "pkgbuild",
+            "--root", str(pkg_root),
+            "--identifier", "com.transcoder.pkg",
+            "--version", "0.1.0",
+            "--install-location", "/",
+            "--scripts", str(scripts_dir),
+            str(component_pkg)
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"Error during pkgbuild: {result.stderr}")
+            return False
+            
+        # Build distribution package
+        final_pkg = Path("dist") / installer_name
+        print("Running productbuild...")
+        cmd = [
+            "productbuild",
+            "--package", str(component_pkg),
+            str(final_pkg)
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"Error during productbuild: {result.stderr}")
+            return False
+            
+        if final_pkg.exists():
+            size_mb = final_pkg.stat().st_size / (1024 * 1024)
+            print(f"\n✓ macOS PKG created successfully: {final_pkg.resolve()}")
+            print(f"  Size: {size_mb:.1f} MB")
+            return True
+            
+    return False
 
 
 def build_installer(iscc_path: Optional[str] = None, build_mode: str = "lightweight", fast: bool = False) -> bool:
@@ -921,7 +1030,7 @@ def main():
     parser.add_argument(
         "--installer",
         action="store_true",
-        help="Build NSIS installer(s) for the specified build mode(s) (Windows only)"
+        help="Build NSIS/Inno Setup installer(s) (Windows) or PKG installer(s) (macOS) for the specified build mode(s)"
     )
     parser.add_argument(
         "--iscc-path",
@@ -949,6 +1058,7 @@ def main():
     # If --installer-only, skip build and go straight to installer
     if args.installer_only:
         print("Installer-only mode: skipping build, using existing dist/")
+        system, _ = get_platform_info()
         
         # Determine which installers to build
         installer_modes = []
@@ -960,20 +1070,23 @@ def main():
         for installer_mode in installer_modes:
             if installer_mode == "full":
                 build_dir = Path("dist") / "transcode"
-                exe_path = build_dir / ("transcode.exe" if platform.system() == "Windows" else "transcode")
+                exe_path = build_dir / ("transcode.exe" if system == "Windows" else "transcode")
             else:
                 build_dir = Path("dist") / "transcode-lightweight"
-                exe_path = build_dir / ("transcode.exe" if platform.system() == "Windows" else "transcode")
+                exe_path = build_dir / ("transcode.exe" if system == "Windows" else "transcode")
             
             if build_dir.exists():
                 print("\nRunning dist smoke test (A)...")
                 if not smoke_test_transcode(exe_path):
                     print("Skipping installer build due to failed dist smoke test.")
                     continue
-                if build_installer(args.iscc_path, installer_mode, args.fast):
-                    installer_path = Path("dist") / ("transcoder-setup-full.exe" if installer_mode == "full" else "transcoder-setup.exe")
-                    print("\nValidating installer payload (B)...")
-                    validate_installer_payload(installer_path, installer_mode, args.iscc_path, args.fast)
+                if system == "Windows":
+                    if build_installer(args.iscc_path, installer_mode, args.fast):
+                        installer_path = Path("dist") / ("transcoder-setup-full.exe" if installer_mode == "full" else "transcoder-setup.exe")
+                        print("\nValidating installer payload (B)...")
+                        validate_installer_payload(installer_path, installer_mode, args.iscc_path, args.fast)
+                elif system == "Darwin":
+                    build_pkg_installer(installer_mode)
             else:
                 print(f"\nError: {installer_mode} build not found at {build_dir}")
                 print(f"Build it first with: python build.py --mode {installer_mode}")
@@ -1034,24 +1147,35 @@ def main():
         elif args.mode in ["full", "lightweight"]:
             installer_modes = [args.mode]
         
+        system, _ = get_platform_info()
+        
         for installer_mode in installer_modes:
             # Check if the build exists
             if installer_mode == "full":
                 build_dir = Path("dist") / "transcode"
-                exe_path = build_dir / ("transcode.exe" if platform.system() == "Windows" else "transcode")
+                exe_name = "transcode.exe" if system == "Windows" else "transcode"
+                exe_path = build_dir / exe_name
             else:
                 build_dir = Path("dist") / "transcode-lightweight"
-                exe_path = build_dir / ("transcode.exe" if platform.system() == "Windows" else "transcode")
+                exe_name = "transcode.exe" if system == "Windows" else "transcode"
+                exe_path = build_dir / exe_name
             
             if build_dir.exists():
-                print("\nRunning dist smoke test (A)...")
+                print(f"\nRunning dist smoke test (A) for {installer_mode}...")
                 if not smoke_test_transcode(exe_path):
-                    print("Skipping installer build due to failed dist smoke test.")
+                    print(f"Skipping {installer_mode} installer build due to failed dist smoke test.")
                     continue
-                if build_installer(args.iscc_path, installer_mode, args.fast):
-                    installer_path = Path("dist") / ("transcoder-setup-full.exe" if installer_mode == "full" else "transcoder-setup.exe")
-                    print("\nValidating installer payload (B)...")
-                    validate_installer_payload(installer_path, installer_mode, args.iscc_path, args.fast)
+
+                if system == "Windows":
+                    if build_installer(args.iscc_path, installer_mode, args.fast):
+                        installer_path = Path("dist") / ("transcoder-setup-full.exe" if installer_mode == "full" else "transcoder-setup.exe")
+                        print("\nValidating installer payload (B)...")
+                        validate_installer_payload(installer_path, installer_mode, args.iscc_path, args.fast)
+                elif system == "Darwin":
+                    if build_pkg_installer(installer_mode):
+                        installer_path = Path("dist") / ("transcoder-full.pkg" if installer_mode == "full" else "transcoder.pkg")
+                        # Note: Extraction/validation for macOS PKG not implemented in B yet
+                        # but dist smoke test (A) already passed.
             else:
                 print(f"\nWarning: {installer_mode} build not found. Skipping installer.")
                 print(f"Build it first with --mode {installer_mode}")

@@ -1,0 +1,25 @@
+#!/bin/bash
+set -euo pipefail
+
+INSTALL_LOCATION="/usr/local/share/transcoder"
+BIN_LINK="/usr/local/bin/transcode"
+
+# Ensure target directories exist
+mkdir -p "$(dirname "$BIN_LINK")"
+
+# Create/replace symlink so `transcode` is on PATH
+ln -sf "${INSTALL_LOCATION}/transcode" "$BIN_LINK"
+
+# Ensure reasonable permissions
+chmod -R 755 "$INSTALL_LOCATION" || true
+chmod 755 "$BIN_LINK" || true
+
+# Basic verification
+if [ ! -x "${INSTALL_LOCATION}/transcode" ]; then
+  echo "ERROR: Expected executable not found at ${INSTALL_LOCATION}/transcode"
+  exit 1
+fi
+
+echo "One Shot Transcoder installed. You can now run: transcode --about"
+exit 0
+

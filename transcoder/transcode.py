@@ -69,7 +69,7 @@ def _format_fallback_title(raw_title: str) -> str:
 
 def dry_run_analyze(
     input_path: Path,
-    rewrap: bool = False,
+    rewrap: bool | None = None,
     target_size_mb_per_hour: float = DEFAULT_TARGET_SIZE_MB_PER_HOUR,
     filename_pattern: str | None = DEFAULT_FILENAME_PATTERN,
     convert_bitmap_subs: bool = True,
@@ -82,13 +82,14 @@ def dry_run_analyze(
     Shows what would happen if the file were processed:
     - Detected metadata (show name, season, episode, etc.)
     - Apple TV compatibility status
-    - Required actions (remux, transcode, etc.)
+    - Required actions (rewrap, transcode, etc.)
     - Output path that would be generated
     - Subtitle handling plan
     
     Args:
         input_path: Path to input video file
-        rewrap: If True, would copy streams without transcoding
+        rewrap: If True, would copy streams without transcoding. If False, would transcode.
+            If None, would automatically select the most efficient mode.
         target_size_mb_per_hour: Target file size in MB per hour
         filename_pattern: Optional manual pattern for parsing metadata from filename
         convert_bitmap_subs: If True, would convert bitmap subtitles to text using OCR
@@ -184,11 +185,17 @@ def dry_run_analyze(
     # Apple TV Compatibility Check
     compat = check_apple_tv_compatibility(probe_data, input_path)
     print(format_compatibility_report(compat, input_path))
+
+    # Smart mode (dry-run): if mode isn't explicitly selected, auto-select the most efficient option.
+    effective_rewrap = rewrap
+    if effective_rewrap is None:
+        # Rewrap is stream copy only; only choose it if neither video nor audio requires transcoding.
+        effective_rewrap = compat.video_action != "transcode" and compat.audio_action != "transcode"
     
     # Determine what would happen
     print("\n--- Processing Plan ---")
     
-    if rewrap:
+    if effective_rewrap:
         print("Mode: Rewrap (stream copy)")
         if compat.video_action == "transcode":
             print("  ⚠ Warning: Video requires transcoding but rewrap mode selected")
@@ -251,17 +258,17 @@ def dry_run_analyze(
     # Summary
     print("\n--- Summary ---")
     if compat.overall_status == CompatibilityStatus.COMPATIBLE:
-        if rewrap:
+        if effective_rewrap:
             print("✓ File is Apple TV compatible. Rewrap will preserve quality.")
         else:
             print("✓ File is Apple TV compatible, but transcoding was requested.")
-    elif compat.overall_status == CompatibilityStatus.NEEDS_REMUX:
+    elif compat.overall_status == CompatibilityStatus.NEEDS_REWRAP:
         print(f"⚠ File needs: {compat.get_summary()}")
-        if rewrap:
+        if effective_rewrap:
             print("  Rewrap mode is appropriate for this file.")
     else:
         print(f"✗ File needs: {compat.get_summary()}")
-        if rewrap:
+        if effective_rewrap:
             print("  ⚠ Consider using transcode mode instead of rewrap.")
     
     print("\n" + "=" * 60)
@@ -271,7 +278,7 @@ def dry_run_analyze(
 
 def dry_run_all(
     source_path: Path,
-    rewrap: bool = False,
+    rewrap: bool | None = None,
     target_size_mb_per_hour: float = DEFAULT_TARGET_SIZE_MB_PER_HOUR,
     filename_pattern: str | None = DEFAULT_FILENAME_PATTERN,
     convert_bitmap_subs: bool = True,

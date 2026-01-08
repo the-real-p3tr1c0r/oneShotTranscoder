@@ -1,0 +1,25 @@
+#!/bin/bash
+set -euo pipefail
+
+INSTALL_LOCATION="/usr/local/share/transcoder"
+BIN_LINK="/usr/local/bin/transcode"
+PKG_ID="com.transcoder.pkg"
+
+# Remove symlink if present
+if [ -L "$BIN_LINK" ] || [ -f "$BIN_LINK" ]; then
+  rm -f "$BIN_LINK" || true
+fi
+
+# Remove installed files
+if [ -d "$INSTALL_LOCATION" ]; then
+  rm -rf "$INSTALL_LOCATION" || true
+fi
+
+# Best-effort: forget package receipt if it exists
+if command -v pkgutil >/dev/null 2>&1; then
+  pkgutil --forget "$PKG_ID" >/dev/null 2>&1 || true
+fi
+
+echo "One Shot Transcoder uninstalled."
+exit 0
+

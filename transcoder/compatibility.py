@@ -302,7 +302,7 @@ def check_apple_tv_compatibility(
             result.audio_action = "transcode"
             # Audio-only transcode doesn't require full transcode
             if result.overall_status == CompatibilityStatus.COMPATIBLE:
-                result.overall_status = CompatibilityStatus.NEEDS_REMUX
+                result.overall_status = CompatibilityStatus.NEEDS_REWRAP
     
     # Estimate time based on required actions
     if result.video_action == "transcode":
