@@ -19,7 +19,7 @@ All builds:
 
 1. **Python 3.10 or higher**
 2. **PyInstaller**: Install with `pip install pyinstaller`
-3. **Internet connection** (for downloading ffmpeg binaries during build)
+3. **Internet connection** (for downloading ffmpeg and UPX binaries during build)
 4. **Inno Setup** (Windows only, for installer): `winget install JRSoftware.InnoSetup` or download from https://jrsoftware.org/isdl.php
 5. **Xcode Command Line Tools** (macOS only, for PKG installer): `xcode-select --install`
 
@@ -96,12 +96,12 @@ The installers will:
 
 The build script (`build.py`) performs the following steps:
 
-1. **Downloads FFmpeg binaries** for your platform:
-   - Windows: Downloads from BtbN/FFmpeg-Builds
-   - macOS: Downloads from evermeet.cx
-   - Linux: Downloads from johnvansickle.com
+1. **Downloads FFmpeg and UPX binaries** for your platform:
+   - Windows: Downloads from BtbN/FFmpeg-Builds (FFmpeg) and upx.github.io (UPX)
+   - macOS: Downloads from evermeet.cx (FFmpeg) and upx.github.io (UPX)
+   - Linux: Downloads from johnvansickle.com (FFmpeg) and upx.github.io (UPX)
 
-2. **Prepares binaries** in `ffmpeg_binaries/` directory
+2. **Prepares binaries** in `ffmpeg_binaries/` (FFmpeg) and `tools/upx/` (UPX) directories
 
 3. **Updates PyInstaller spec file** to include bundled binaries
 

@@ -22,11 +22,28 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+import tarfile
 import zipfile
+import multiprocessing
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional
-import multiprocessing
+from typing import Optional, List, Tuple
+import re
+
+# UPX Download URLs
+UPX_VERSION = "4.2.4"
+UPX_URLS = {
+    "Windows": {
+        "x86_64": f"https://github.com/upx/upx/releases/download/v{UPX_VERSION}/upx-{UPX_VERSION}-win64.zip",
+    },
+    "Darwin": {
+        "x86_64": f"https://github.com/upx/upx/releases/download/v{UPX_VERSION}/upx-{UPX_VERSION}-macos_x86_64.tar.xz",
+        "arm64": f"https://github.com/upx/upx/releases/download/v{UPX_VERSION}/upx-{UPX_VERSION}-macos_arm64.tar.xz",
+    },
+    "Linux": {
+        "x86_64": f"https://github.com/upx/upx/releases/download/v{UPX_VERSION}/upx-{UPX_VERSION}-amd64_linux.tar.xz",
+    }
+}
 
 # FFmpeg download URLs (using static builds from BtbN/ffmpeg-builds)
 FFMPEG_URLS = {
@@ -362,6 +379,11 @@ def find_upx() -> Optional[str]:
         if upx_path:
             return upx_path
     
+    # Check local tools folder
+    tools_upx = Path("tools") / "upx" / ("upx.exe" if platform.system() == "Windows" else "upx")
+    if tools_upx.exists():
+        return str(tools_upx)
+
     # Check PyInstaller's UPX location (if bundled)
     try:
         import PyInstaller.utils.win32.versioninfo
@@ -372,6 +394,69 @@ def find_upx() -> Optional[str]:
                 return str(upx_path)
     except Exception:
         pass
+    
+    return None
+
+
+def ensure_upx() -> Optional[str]:
+    """Ensure UPX is available, downloading it if necessary.
+    
+    Returns:
+        Path to UPX executable, or None if download failed or platform unsupported
+    """
+    upx_path = find_upx()
+    if upx_path:
+        return upx_path
+        
+    system, arch = get_platform_info()
+    if system not in UPX_URLS or arch not in UPX_URLS[system]:
+        print(f"Warning: Automated UPX download not supported for {system} {arch}")
+        return None
+        
+    url = UPX_URLS[system][arch]
+    tools_dir = Path("tools")
+    tools_dir.mkdir(exist_ok=True)
+    upx_dir = tools_dir / "upx"
+    upx_dir.mkdir(exist_ok=True)
+    
+    local_upx = upx_dir / ("upx.exe" if system == "Windows" else "upx")
+    
+    print(f"\nUPX not found. Downloading v{UPX_VERSION} for {system} {arch}...")
+    try:
+        with tempfile.TemporaryDirectory(prefix="transcoder-upx-") as tmp:
+            temp_path = Path(tmp)
+            archive_name = "upx.zip" if system == "Windows" else "upx.tar.xz"
+            archive_path = temp_path / archive_name
+            download_file(url, archive_path)
+            
+            if system == "Windows":
+                with zipfile.ZipFile(archive_path, 'r') as z:
+                    z.extractall(temp_path)
+            else:
+                # Use tarfile for .tar.xz
+                with tarfile.open(archive_path, 'r:xz') as t:
+                    t.extractall(temp_path)
+            
+            # Find and copy the executable (it's usually in a subdirectory)
+            found_upx = False
+            for root, _, files in os.walk(temp_path):
+                for file in files:
+                    if file.lower() in ("upx", "upx.exe"):
+                        shutil.copy2(Path(root) / file, local_upx)
+                        if system != "Windows":
+                            os.chmod(local_upx, 0o755)
+                        found_upx = True
+                        break
+                if found_upx:
+                    break
+            
+            if found_upx:
+                print(f"✓ UPX prepared successfully: {local_upx}")
+                return str(local_upx)
+            else:
+                print("Error: Could not find UPX executable in downloaded archive")
+    except Exception as e:
+        print(f"Warning: Failed to download/extract UPX: {e}")
     
     return None
 
@@ -423,11 +508,11 @@ def compress_binaries_parallel(build_dir: Path, upx_path: Optional[str] = None) 
         True if compression completed (with or without errors), False if UPX not found
     """
     if upx_path is None:
-        upx_path = find_upx()
+        upx_path = ensure_upx()
     
     if upx_path is None:
-        print("Warning: UPX not found. Skipping binary compression.")
-        print("Install UPX from https://upx.github.io/ for smaller binaries.")
+        print("\nWarning: UPX not found. Skipping binary compression.")
+        print("Smaller binaries can be achieved by installing UPX.")
         return False
     
     print(f"\nCompressing binaries with UPX (parallel)...")
@@ -1093,15 +1178,16 @@ def main():
         
         return
     
-    # Step 1: Prepare ffmpeg binaries
-    print("Step 1: Preparing FFmpeg binaries...")
+    # Step 1: Prepare binaries (FFmpeg and UPX)
+    print("Step 1: Preparing binaries...")
     try:
         ffmpeg_dir = prepare_ffmpeg_binaries()
+        ensure_upx()
     except Exception as e:
-        print(f"Error preparing FFmpeg binaries: {e}")
-        print("\nNote: You can manually place ffmpeg binaries in 'ffmpeg_binaries/' directory:")
-        print("  - Windows: ffmpeg.exe, ffprobe.exe")
-        print("  - macOS/Linux: ffmpeg, ffprobe")
+        print(f"Error preparing binaries: {e}")
+        print("\nNote: You can manually place binaries in their respective directories:")
+        print("  - FFmpeg: Place in 'ffmpeg_binaries/' (ffmpeg.exe/ffprobe.exe or ffmpeg/ffprobe)")
+        print("  - UPX: Place in 'tools/upx/' (upx.exe or upx)")
         sys.exit(1)
     
     build_modes = []
