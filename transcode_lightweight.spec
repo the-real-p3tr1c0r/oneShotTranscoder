@@ -23,8 +23,8 @@ hiddenimports = [
     'PIL',
 ]
 
-# Collect data files for packages that need them
-from PyInstaller.utils.hooks import collect_data_files
+# Collect data files / submodules for packages that need them
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 try:
     setuptools_datas = collect_data_files('setuptools')
@@ -69,6 +69,14 @@ except Exception:
 
 # Combine all data files
 package_datas = setuptools_datas + babelfish_datas + cleanit_datas + pgsrip_datas + trakit_datas + guessit_datas + rebulk_datas
+
+# Babelfish loads converters dynamically (via importlib); ensure converter submodules are bundled
+try:
+    babelfish_hiddenimports = collect_submodules("babelfish.converters")
+except Exception:
+    babelfish_hiddenimports = []
+
+hiddenimports = hiddenimports + babelfish_hiddenimports
 
 # Modules to exclude
 # Heavy deps (torch, easyocr, cv2) excluded - downloaded on-demand
