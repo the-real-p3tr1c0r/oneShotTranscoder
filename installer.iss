@@ -82,6 +82,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ; Uninstaller
 UninstallDisplayIcon={app}\transcode.exe
 UninstallDisplayName={#MyAppName}
+UsedUserAreas=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -110,28 +111,28 @@ Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 [Registry]
 ; Store installation info
 #ifndef VALIDATION
-Root: HKLM; Subkey: "Software\{#MyAppFolder}"; ValueType: string; ValueName: "InstallPath"; ValueData: "{app}"; Flags: uninsdeletekey
-Root: HKLM; Subkey: "Software\{#MyAppFolder}"; ValueType: string; ValueName: "Version"; ValueData: "{#MyAppVersion}"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\{#MyAppFolder}"; ValueType: string; ValueName: "InstallPath"; ValueData: "{app}"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\{#MyAppFolder}"; ValueType: string; ValueName: "Version"; ValueData: "{#MyAppVersion}"; Flags: uninsdeletekey
 #endif
 
 [Code]
 #ifndef VALIDATION
 const
-  EnvironmentKey = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
+  EnvironmentKey = 'Environment';
 
 procedure AddToPath();
 var
   CurrentPath: string;
   NewPath: string;
 begin
-  if RegQueryStringValue(HKEY_LOCAL_MACHINE, EnvironmentKey, 'Path', CurrentPath) then
+  if RegQueryStringValue(HKA, EnvironmentKey, 'Path', CurrentPath) then
   begin
     // Check if already in PATH
     if Pos(ExpandConstant('{app}'), CurrentPath) = 0 then
     begin
       // Add to PATH
       NewPath := CurrentPath + ';' + ExpandConstant('{app}');
-      RegWriteStringValue(HKEY_LOCAL_MACHINE, EnvironmentKey, 'Path', NewPath);
+      RegWriteStringValue(HKA, EnvironmentKey, 'Path', NewPath);
     end;
   end;
 end;
@@ -143,7 +144,7 @@ var
   NewPath: string;
   P: Integer;
 begin
-  if RegQueryStringValue(HKEY_LOCAL_MACHINE, EnvironmentKey, 'Path', CurrentPath) then
+  if RegQueryStringValue(HKA, EnvironmentKey, 'Path', CurrentPath) then
   begin
     AppPath := ExpandConstant('{app}');
     
@@ -152,7 +153,7 @@ begin
     if P > 0 then
     begin
       NewPath := Copy(CurrentPath, 1, P - 1) + Copy(CurrentPath, P + Length(AppPath) + 1, MaxInt);
-      RegWriteStringValue(HKEY_LOCAL_MACHINE, EnvironmentKey, 'Path', NewPath);
+      RegWriteStringValue(HKA, EnvironmentKey, 'Path', NewPath);
       Exit;
     end;
     
@@ -161,14 +162,14 @@ begin
     if P > 0 then
     begin
       NewPath := Copy(CurrentPath, 1, P - 1) + Copy(CurrentPath, P + Length(AppPath) + 1, MaxInt);
-      RegWriteStringValue(HKEY_LOCAL_MACHINE, EnvironmentKey, 'Path', NewPath);
+      RegWriteStringValue(HKA, EnvironmentKey, 'Path', NewPath);
       Exit;
     end;
     
     // Remove standalone (only entry)
     if CurrentPath = AppPath then
     begin
-      RegWriteStringValue(HKEY_LOCAL_MACHINE, EnvironmentKey, 'Path', '');
+      RegWriteStringValue(HKA, EnvironmentKey, 'Path', '');
     end;
   end;
 end;
