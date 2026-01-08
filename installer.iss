@@ -82,7 +82,6 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ; Uninstaller
 UninstallDisplayIcon={app}\transcode.exe
 UninstallDisplayName={#MyAppName}
-UsedUserAreas=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
