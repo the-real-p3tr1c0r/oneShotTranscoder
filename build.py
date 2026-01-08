@@ -508,11 +508,24 @@ def build_executable(spec_file: Path, build_mode: str = "full") -> None:
         print("Error: PyInstaller is not installed.")
         print("Install it with: pip install pyinstaller")
         sys.exit(1)
+
+    exe_ext = ".exe" if platform.system() == "Windows" else ""
+    if build_mode == "full":
+        output_dir = Path("dist") / "transcode"
+        exe_path = output_dir / f"transcode{exe_ext}"
+    else:
+        output_dir = Path("dist") / "transcode-lightweight"
+        exe_path = output_dir / f"transcode{exe_ext}"
+
+    # Ensure old outputs won't trigger overwrite prompts
+    if output_dir.exists():
+        print(f"Cleaning existing output directory: {output_dir}")
+        shutil.rmtree(output_dir)
     
     # Run PyInstaller with the modified spec file using wrapper script
     # The wrapper patches importlib.metadata to handle corrupted numpy metadata
     wrapper_script = Path(__file__).parent / "pyinstaller_wrapper.py"
-    cmd = [sys.executable, str(wrapper_script), str(spec_file), "--clean"]
+    cmd = [sys.executable, str(wrapper_script), str(spec_file), "--clean", "--noconfirm"]
     
     result = subprocess.run(cmd, cwd=Path.cwd())
     
@@ -521,14 +534,6 @@ def build_executable(spec_file: Path, build_mode: str = "full") -> None:
         sys.exit(1)
     
     print("PyInstaller build completed!")
-    exe_ext = ".exe" if platform.system() == "Windows" else ""
-    
-    if build_mode == "full":
-        output_dir = Path("dist") / "transcode"
-        exe_path = output_dir / f"transcode{exe_ext}"
-    else:
-        output_dir = Path("dist") / "transcode-lightweight"
-        exe_path = output_dir / f"transcode{exe_ext}"
     
     if exe_path.exists():
         print(f"Executable location: {exe_path.resolve()}")
@@ -538,6 +543,139 @@ def build_executable(spec_file: Path, build_mode: str = "full") -> None:
             compress_binaries_parallel(output_dir)
     else:
         print("Warning: Executable not found at expected location")
+
+
+def _run_smoke_cmd(exe_path: Path, args: list[str], cwd: Path) -> tuple[bool, str]:
+    cmd = [str(exe_path)] + args
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"Timeout: {' '.join(cmd)}"
+    except Exception as e:
+        return False, f"Error running {' '.join(cmd)}: {e}"
+
+    log_lines: list[str] = [f"$ {' '.join(cmd)}", f"exit={result.returncode}"]
+    if result.stdout:
+        log_lines.append("stdout:")
+        log_lines.append(result.stdout.rstrip())
+    if result.stderr:
+        log_lines.append("stderr:")
+        log_lines.append(result.stderr.rstrip())
+    return result.returncode == 0, "\n".join(log_lines)
+
+
+def smoke_test_transcode(exe_path: Path) -> bool:
+    """Smoke test transcode executable.
+
+    Runs in an empty temp directory to avoid scanning large trees:
+    - transcode --about
+    - transcode --dry-run
+    """
+    if not exe_path.exists():
+        print(f"Smoke test failed: executable not found: {exe_path}")
+        return False
+
+    with tempfile.TemporaryDirectory(prefix="transcoder-smoke-") as tmp:
+        tmp_dir = Path(tmp)
+
+        for test_args in (["--about"], ["--dry-run"]):
+            ok, log = _run_smoke_cmd(exe_path, test_args, tmp_dir)
+            if not ok:
+                print("\nSmoke test failed:")
+                print(log)
+                return False
+
+    print("Smoke test passed.")
+    return True
+
+
+def _find_7zip() -> Optional[str]:
+    for candidate in ["7z", "7z.exe", "7za", "7za.exe"]:
+        found = shutil.which(candidate)
+        if found:
+            return found
+    return None
+
+
+def _find_transcode_exe(search_root: Path) -> Optional[Path]:
+    candidates = [p for p in search_root.rglob("transcode.exe") if p.is_file()]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda p: (len(p.parts), str(p).lower()))
+    return candidates[0]
+
+
+def validate_installer_payload(installer_path: Path) -> bool:
+    """Validate installer by extracting to a temp dir and running smoke tests there."""
+    if not installer_path.exists():
+        print(f"Installer validation failed: installer not found: {installer_path}")
+        return False
+
+    with tempfile.TemporaryDirectory(prefix="transcoder-installer-") as tmp:
+        tmp_dir = Path(tmp)
+
+        seven_zip = _find_7zip()
+        used_silent_install = False
+        if seven_zip:
+            print(f"Extracting installer with 7-Zip: {seven_zip}")
+            extract_cmd = [seven_zip, "x", str(installer_path), f"-o{tmp_dir}", "-y"]
+            result = subprocess.run(extract_cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print("Installer extraction failed:")
+                if result.stdout:
+                    print(result.stdout)
+                if result.stderr:
+                    print(result.stderr)
+                return False
+        else:
+            used_silent_install = True
+            install_dir = tmp_dir / "install"
+            install_dir.mkdir(parents=True, exist_ok=True)
+            print("7-Zip not found; using silent temp install for validation.")
+            install_cmd = [
+                str(installer_path),
+                "/VERYSILENT",
+                "/SUPPRESSMSGBOXES",
+                "/NORESTART",
+                f"/DIR={install_dir}",
+            ]
+            result = subprocess.run(install_cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print("Silent install failed:")
+                if result.stdout:
+                    print(result.stdout)
+                if result.stderr:
+                    print(result.stderr)
+                return False
+
+        extracted_exe = _find_transcode_exe(tmp_dir)
+        if not extracted_exe:
+            print(f"Installer validation failed: could not find transcode.exe under {tmp_dir}")
+            return False
+
+        print(f"Running smoke test against installer payload: {extracted_exe}")
+        ok = smoke_test_transcode(extracted_exe)
+
+        # Best-effort uninstall if we used silent install
+        if used_silent_install:
+            for unins in tmp_dir.rglob("unins*.exe"):
+                try:
+                    subprocess.run(
+                        [str(unins), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
+                        capture_output=True,
+                        text=True,
+                        timeout=300,
+                    )
+                except Exception:
+                    pass
+
+        return ok
 
 
 def find_inno_setup_compiler() -> Optional[str]:
@@ -668,6 +806,12 @@ def build_installer(iscc_path: Optional[str] = None, build_mode: str = "lightwei
     
     # Ensure dist directory exists
     Path("dist").mkdir(exist_ok=True)
+
+    # Remove existing installer output to avoid overwrite prompts
+    existing_installer = Path("dist") / installer_name
+    if existing_installer.exists():
+        print(f"Removing existing installer: {existing_installer}")
+        existing_installer.unlink()
     
     # Build installer with build mode parameter
     installer_script = Path("installer.iss")
@@ -760,11 +904,20 @@ def main():
         for installer_mode in installer_modes:
             if installer_mode == "full":
                 build_dir = Path("dist") / "transcode"
+                exe_path = build_dir / ("transcode.exe" if platform.system() == "Windows" else "transcode")
             else:
                 build_dir = Path("dist") / "transcode-lightweight"
+                exe_path = build_dir / ("transcode.exe" if platform.system() == "Windows" else "transcode")
             
             if build_dir.exists():
-                build_installer(args.iscc_path, installer_mode, args.fast)
+                print("\nRunning dist smoke test (A)...")
+                if not smoke_test_transcode(exe_path):
+                    print("Skipping installer build due to failed dist smoke test.")
+                    continue
+                if build_installer(args.iscc_path, installer_mode, args.fast):
+                    installer_path = Path("dist") / ("transcoder-setup-full.exe" if installer_mode == "full" else "transcoder-setup.exe")
+                    print("\nValidating installer payload (B)...")
+                    validate_installer_payload(installer_path)
             else:
                 print(f"\nError: {installer_mode} build not found at {build_dir}")
                 print(f"Build it first with: python build.py --mode {installer_mode}")
@@ -829,11 +982,20 @@ def main():
             # Check if the build exists
             if installer_mode == "full":
                 build_dir = Path("dist") / "transcode"
+                exe_path = build_dir / ("transcode.exe" if platform.system() == "Windows" else "transcode")
             else:
                 build_dir = Path("dist") / "transcode-lightweight"
+                exe_path = build_dir / ("transcode.exe" if platform.system() == "Windows" else "transcode")
             
             if build_dir.exists():
-                build_installer(args.iscc_path, installer_mode, args.fast)
+                print("\nRunning dist smoke test (A)...")
+                if not smoke_test_transcode(exe_path):
+                    print("Skipping installer build due to failed dist smoke test.")
+                    continue
+                if build_installer(args.iscc_path, installer_mode, args.fast):
+                    installer_path = Path("dist") / ("transcoder-setup-full.exe" if installer_mode == "full" else "transcoder-setup.exe")
+                    print("\nValidating installer payload (B)...")
+                    validate_installer_payload(installer_path)
             else:
                 print(f"\nWarning: {installer_mode} build not found. Skipping installer.")
                 print(f"Build it first with --mode {installer_mode}")

@@ -75,6 +75,12 @@ python build.py --mode full --installer
 python build.py --mode both --installer
 ```
 
+Smoke tests:
+- When `--installer` is used, the build script first runs a **dist smoke test** (A) by executing:
+  - `transcode --about`
+  - `transcode --dry-run`
+- Only if (A) passes, it builds the installer and then performs an **installer payload validation** (B) by extracting the installer to a temp directory (7-Zip if available, otherwise silent temp install) and running the same commands.
+
 The installers will:
 - Install to `C:\Program Files\Transcoder\`
 - Register in Windows Control Panel (Apps & Features)
