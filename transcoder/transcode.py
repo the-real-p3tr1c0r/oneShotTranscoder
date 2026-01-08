@@ -316,7 +316,7 @@ def dry_run_all(
 
 def transcode_file(
     input_path: Path,
-    rewrap: bool = False,
+    rewrap: bool | None = None,
     target_size_mb_per_hour: float = DEFAULT_TARGET_SIZE_MB_PER_HOUR,
     filename_pattern: str | None = DEFAULT_FILENAME_PATTERN,
     convert_bitmap_subs: bool = True,
@@ -329,7 +329,7 @@ def transcode_file(
     
     Args:
         input_path: Path to input video file
-        rewrap: If True, copy streams without transcoding
+        rewrap: If True, copy streams. If False, transcode. If None, auto-detect.
         target_size_mb_per_hour: Target file size in MB per hour
         filename_pattern: Optional manual pattern for parsing metadata from filename
         convert_bitmap_subs: If True, convert bitmap subtitles to text using OCR
@@ -372,6 +372,17 @@ def transcode_file(
         probe_data = probe_video_file(input_path)
         text_subtitle_streams = get_text_subtitle_streams(probe_data)
         
+        # Smart mode: auto-select rewrap vs transcode if not specified
+        effective_rewrap = rewrap
+        if effective_rewrap is None:
+            compat = check_apple_tv_compatibility(probe_data, input_path)
+            if compat.overall_status in {CompatibilityStatus.COMPATIBLE, CompatibilityStatus.NEEDS_REWRAP}:
+                print("File is Apple TV compatible. Selecting Rewrap mode for efficiency.")
+                effective_rewrap = True
+            else:
+                print("File is not Apple TV compatible. Selecting Transcode mode.")
+                effective_rewrap = False
+        
         # Find and convert cover image if available
         cover_image = find_cover_image(input_path.parent)
         if cover_image:
@@ -405,7 +416,7 @@ def transcode_file(
             except Exception as e:
                 print(f"Warning: Could not convert bitmap subtitles: {e}")
         
-        if rewrap:
+        if effective_rewrap:
             cmd = build_rewrap_command(
                 input_path, output_path, text_subtitle_streams, probe_data,
                 generated_subtitles, media_metadata, cover_image_path
@@ -449,7 +460,7 @@ def transcode_file(
         
         # Get input file size for rewrap percentage calculation
         input_size_bytes = None
-        if rewrap and input_path.exists():
+        if effective_rewrap and input_path.exists():
             try:
                 input_size_bytes = input_path.stat().st_size
             except (OSError, AttributeError):
@@ -458,7 +469,7 @@ def transcode_file(
         # Get total frames and source FPS for transcode percentage calculation and time display
         total_frames = None
         source_fps = None
-        if not rewrap:
+        if not effective_rewrap:
             try:
                 total_frames = get_total_frames(probe_data)
                 source_fps = get_video_fps(probe_data)
@@ -487,7 +498,7 @@ def transcode_file(
 
 def transcode_all(
     source_path: Path,
-    rewrap: bool = False,
+    rewrap: bool | None = None,
     target_size_mb_per_hour: float = DEFAULT_TARGET_SIZE_MB_PER_HOUR,
     filename_pattern: str | None = DEFAULT_FILENAME_PATTERN,
     convert_bitmap_subs: bool = True,
@@ -500,7 +511,7 @@ def transcode_all(
     
     Args:
         source_path: Path to input video file or directory containing video files
-        rewrap: If True, copy streams without transcoding
+        rewrap: If True, copy streams. If False, transcode. If None, auto-detect.
         target_size_mb_per_hour: Target file size in MB per hour
         filename_pattern: Optional manual pattern for parsing metadata from filename
         convert_bitmap_subs: If True, convert bitmap subtitles to text using OCR

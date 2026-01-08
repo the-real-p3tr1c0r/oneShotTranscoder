@@ -208,9 +208,13 @@ Default behavior:
     )
     parser.add_argument(
         "--rewrap",
-        action="store_true",
+        dest="rewrap",
+        action="store_const",
+        const=True,
+        default=None,
         help="Rewrap/copy streams without transcoding. Much faster but preserves "
-             "original file size. Use when source video is already HEVC/H.265.",
+             "original file size. Use when source video is already HEVC/H.265. "
+             "If not specified, the tool will automatically select the best mode.",
     )
     parser.add_argument(
         "--targetSizePerHour",
@@ -305,6 +309,21 @@ def main() -> None:
         print("Error: ffmpeg or ffprobe not found. Please install ffmpeg.")
         sys.exit(1)
     
+    # Mode detection: determine if any explicit transcode parameters were provided
+    # If any are provided, we force transcode mode unless --rewrap is explicitly requested.
+    # DEFAULT_TARGET_SIZE_MB_PER_HOUR is the default, so if it's different, it was provided.
+    explicit_transcode_params = (
+        args.targetSizePerHour != DEFAULT_TARGET_SIZE_MB_PER_HOUR
+    )
+    
+    # Set rewrap mode
+    # If rewrap is None (not specified), and no explicit transcode params, use auto-detect (None)
+    # If rewrap is None and transcode params ARE specified, force transcode (False)
+    rewrap_mode = args.rewrap
+    if rewrap_mode is None and explicit_transcode_params:
+        print("Explicit transcode parameters provided. Forcing Transcode mode.")
+        rewrap_mode = False
+    
     # Check dependencies (only if bitmap subtitle conversion is enabled)
     if not getattr(args, "noBitmapSubs", False):
         try:
@@ -360,7 +379,7 @@ def main() -> None:
                 for video_file in video_files:
                     if transcode_file(
                         video_file,
-                        rewrap=args.rewrap,
+                        rewrap=rewrap_mode,
                         target_size_mb_per_hour=args.targetSizePerHour,
                         filename_pattern=args.fileNamePattern,
                         convert_bitmap_subs=not args.noBitmapSubs,
@@ -390,7 +409,7 @@ def main() -> None:
         if getattr(args, "dry_run", False):
             dry_run_all(
                 source_path,
-                rewrap=args.rewrap,
+                rewrap=rewrap_mode,
                 target_size_mb_per_hour=args.targetSizePerHour,
                 filename_pattern=args.fileNamePattern,
                 convert_bitmap_subs=not args.noBitmapSubs,
@@ -400,7 +419,7 @@ def main() -> None:
         else:
             transcode_all(
                 source_path,
-                rewrap=args.rewrap,
+                rewrap=rewrap_mode,
                 target_size_mb_per_hour=args.targetSizePerHour,
                 filename_pattern=args.fileNamePattern,
                 convert_bitmap_subs=not args.noBitmapSubs,

@@ -25,7 +25,7 @@ from typing import Any
 class CompatibilityStatus(Enum):
     """Compatibility check result status."""
     COMPATIBLE = "compatible"
-    NEEDS_REMUX = "needs_remux"
+    NEEDS_REWRAP = "needs_rewrap"
     NEEDS_TRANSCODE = "needs_transcode"
 
 
@@ -46,7 +46,7 @@ class AppleTVCompatibility:
     checks: list[CompatibilityCheck] = field(default_factory=list)
     video_action: str = "copy"  # "copy" or "transcode"
     audio_action: str = "copy"  # "copy" or "transcode"
-    container_action: str = "none"  # "none" or "remux"
+    container_action: str = "none"  # "none" or "rewrap"
     estimated_time: str = "unknown"
     
     def add_check(self, check: CompatibilityCheck) -> None:
@@ -56,8 +56,8 @@ class AppleTVCompatibility:
     def get_summary(self) -> str:
         """Get a summary of required actions."""
         actions = []
-        if self.container_action == "remux":
-            actions.append("remux to MP4")
+        if self.container_action == "rewrap":
+            actions.append("rewrap to MP4 (stream copy)")
         if self.video_action == "transcode":
             actions.append("transcode video")
         if self.audio_action == "transcode":
@@ -146,12 +146,12 @@ def check_apple_tv_compatibility(
         compatible=container_compatible,
         current_value=container_ext.upper().lstrip("."),
         required_value="MP4/M4V/MOV",
-        action_needed="Remux to MP4" if not container_compatible else None,
+        action_needed="Rewrap to MP4 (--rewrap)" if not container_compatible else None,
     ))
     if not container_compatible:
-        result.container_action = "remux"
+        result.container_action = "rewrap"
         if result.overall_status == CompatibilityStatus.COMPATIBLE:
-            result.overall_status = CompatibilityStatus.NEEDS_REMUX
+            result.overall_status = CompatibilityStatus.NEEDS_REWRAP
     
     # Check video codec
     if video_stream:
@@ -307,8 +307,8 @@ def check_apple_tv_compatibility(
     # Estimate time based on required actions
     if result.video_action == "transcode":
         result.estimated_time = "Long (video re-encoding required)"
-    elif result.audio_action == "transcode" or result.container_action == "remux":
-        result.estimated_time = "Fast (remux/audio only)"
+    elif result.audio_action == "transcode" or result.container_action == "rewrap":
+        result.estimated_time = "Fast (rewrap/audio only)"
     else:
         result.estimated_time = "None (already compatible)"
     
@@ -345,12 +345,14 @@ def format_compatibility_report(
     # Overall result
     if compat.overall_status == CompatibilityStatus.COMPATIBLE:
         lines.append("Result: COMPATIBLE (no changes needed)")
-    elif compat.overall_status == CompatibilityStatus.NEEDS_REMUX:
-        lines.append(f"Result: REMUX REQUIRED ({compat.get_summary()})")
+    elif compat.overall_status == CompatibilityStatus.NEEDS_REWRAP:
+        lines.append(f"Result: REWRAP RECOMMENDED ({compat.get_summary()})")
+        lines.append("  Use --rewrap for maximum efficiency and quality preservation.")
     else:
         lines.append(f"Result: TRANSCODE REQUIRED ({compat.get_summary()})")
     
     lines.append(f"Estimated time: {compat.estimated_time}")
     
     return "\n".join(lines)
+
 
