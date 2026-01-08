@@ -120,10 +120,10 @@ def dry_run_analyze(
             print(f"Type: TV Show")
             print(f"Pattern: {detection.pattern_name}")
             print(f"Series: {media_metadata.series_name}")
-            if media_metadata.season is not None:
-                print(f"Season: {media_metadata.season}")
-            if media_metadata.episode is not None:
-                print(f"Episode: {media_metadata.episode}")
+            if media_metadata.season_number is not None:
+                print(f"Season: {media_metadata.season_number}")
+            if media_metadata.episode_number is not None:
+                print(f"Episode: {media_metadata.episode_number}")
             if media_metadata.episode_title:
                 print(f"Episode Title: {media_metadata.episode_title}")
         elif detection.media_type == MediaType.MOVIE and isinstance(media_metadata, MovieMetadata):
