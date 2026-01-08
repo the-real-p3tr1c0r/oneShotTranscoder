@@ -600,6 +600,14 @@ def _find_7zip() -> Optional[str]:
         found = shutil.which(candidate)
         if found:
             return found
+    # Common Windows install locations
+    common_paths = [
+        Path(r"C:\Program Files\7-Zip\7z.exe"),
+        Path(r"C:\Program Files (x86)\7-Zip\7z.exe"),
+    ]
+    for p in common_paths:
+        if p.exists():
+            return str(p)
     return None
 
 
