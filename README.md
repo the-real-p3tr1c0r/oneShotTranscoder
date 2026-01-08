@@ -92,6 +92,11 @@ Rewrap mode (copy streams without transcoding):
 transcode --rewrap "video.mkv"
 ```
 
+Force transcode (even if compatible):
+```bash
+transcode --transcode "video.mkv"
+```
+
 Custom target file size:
 ```bash
 transcode --targetSizePerHour 1200 "video.mkv"

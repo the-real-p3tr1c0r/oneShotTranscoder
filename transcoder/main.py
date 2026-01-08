@@ -217,6 +217,13 @@ Default behavior:
              "If not specified, the tool will automatically select the best mode.",
     )
     parser.add_argument(
+        "--transcode",
+        dest="transcode",
+        action="store_true",
+        help="Force transcode even if the file is Apple TV compatible. "
+             "Use with --targetSizePerHour to control output size (default 900 MB/hour).",
+    )
+    parser.add_argument(
         "--targetSizePerHour",
         type=float,
         default=DEFAULT_TARGET_SIZE_MB_PER_HOUR,
@@ -314,13 +321,17 @@ def main() -> None:
     # DEFAULT_TARGET_SIZE_MB_PER_HOUR is the default, so if it's different, it was provided.
     explicit_transcode_params = (
         args.targetSizePerHour != DEFAULT_TARGET_SIZE_MB_PER_HOUR
+        or getattr(args, "transcode", False)
     )
     
-    # Set rewrap mode
-    # If rewrap is None (not specified), and no explicit transcode params, use auto-detect (None)
-    # If rewrap is None and transcode params ARE specified, force transcode (False)
+    # Set rewrap/transcode mode
+    # - If --transcode is passed, force transcode (rewrap_mode=False).
+    # - If rewrap is None and transcode params are provided, force transcode.
+    # - Otherwise keep user choice or auto-detect (None).
     rewrap_mode = args.rewrap
-    if rewrap_mode is None and explicit_transcode_params:
+    if getattr(args, "transcode", False):
+        rewrap_mode = False
+    elif rewrap_mode is None and explicit_transcode_params:
         print("Explicit transcode parameters provided. Forcing Transcode mode.")
         rewrap_mode = False
     
