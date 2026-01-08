@@ -13,8 +13,8 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
-# Run the build script
-python3 build.py
+# Run the build script with all passed arguments
+python3 build.py "$@"
 
 if [ $? -eq 0 ]; then
     echo ""
