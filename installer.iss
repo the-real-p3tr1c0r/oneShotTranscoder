@@ -64,8 +64,15 @@ WizardStyle=modern
 SetupIconFile=compiler:SetupClassicIcon.ico
 
 ; Privileges
+; VALIDATION mode is used by build automation to perform a non-admin temp install
+; for smoke-testing the installer payload (no PATH/registry writes).
+#ifdef VALIDATION
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=commandline
+#else
 PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
+#endif
 
 ; Misc
 DisableProgramGroupPage=yes
@@ -80,7 +87,9 @@ UninstallDisplayName={#MyAppName}
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
+#ifndef VALIDATION
 Name: "addtopath"; Description: "Add to system PATH (allows running 'transcode' from any command prompt)"; GroupDescription: "Additional options:"; Flags: checkedonce
+#endif
 
 [Files]
 ; Copy the entire build directory
@@ -100,10 +109,13 @@ Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 
 [Registry]
 ; Store installation info
+#ifndef VALIDATION
 Root: HKLM; Subkey: "Software\{#MyAppFolder}"; ValueType: string; ValueName: "InstallPath"; ValueData: "{app}"; Flags: uninsdeletekey
 Root: HKLM; Subkey: "Software\{#MyAppFolder}"; ValueType: string; ValueName: "Version"; ValueData: "{#MyAppVersion}"; Flags: uninsdeletekey
+#endif
 
 [Code]
+#ifndef VALIDATION
 const
   EnvironmentKey = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
 
@@ -178,3 +190,4 @@ begin
   end;
 end;
 
+#endif

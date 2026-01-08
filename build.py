@@ -619,8 +619,56 @@ def _find_transcode_exe(search_root: Path) -> Optional[Path]:
     return candidates[0]
 
 
-def validate_installer_payload(installer_path: Path) -> bool:
-    """Validate installer by extracting to a temp dir and running smoke tests there."""
+def _compile_validation_installer(
+    iscc_path: Optional[str],
+    build_mode: str,
+    fast: bool,
+    output_dir: Path,
+) -> Optional[Path]:
+    """Compile a non-admin validation installer (VALIDATION define) into output_dir."""
+    system, _ = get_platform_info()
+    if system != "Windows":
+        return None
+
+    if iscc_path:
+        iscc_compiler = iscc_path
+        if not Path(iscc_compiler).exists():
+            return None
+    else:
+        iscc_compiler = find_inno_setup_compiler()
+        if not iscc_compiler:
+            return None
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    installer_script = Path("installer.iss")
+    if not installer_script.exists():
+        return None
+
+    base_name = f"transcoder-setup-{build_mode}-validation"
+    cmd = [
+        iscc_compiler,
+        f"/DBUILD_MODE={build_mode}",
+        "/DVALIDATION=1",
+        f"/O{output_dir}",
+        f"/F{base_name}",
+    ]
+
+    if fast:
+        cpu_count = multiprocessing.cpu_count()
+        thread_count = max(1, cpu_count - 1)
+        cmd.append(f"/DLZMA_THREADS={thread_count}")
+
+    cmd.append(str(installer_script))
+    result = subprocess.run(cmd, cwd=Path.cwd(), capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+
+    candidate = output_dir / f"{base_name}.exe"
+    return candidate if candidate.exists() else None
+
+
+def validate_installer_payload(installer_path: Path, build_mode: str, iscc_path: Optional[str], fast: bool) -> bool:
+    """Validate installer payload by extracting/installing to a temp dir and running smoke tests there."""
     if not installer_path.exists():
         print(f"Installer validation failed: installer not found: {installer_path}")
         return False
@@ -629,7 +677,7 @@ def validate_installer_payload(installer_path: Path) -> bool:
         tmp_dir = Path(tmp)
 
         seven_zip = _find_7zip()
-        used_silent_install = False
+        used_validation_installer = False
         if seven_zip:
             print(f"Extracting installer with 7-Zip: {seven_zip}")
             extract_cmd = [seven_zip, "x", str(installer_path), f"-o{tmp_dir}", "-y"]
@@ -640,22 +688,32 @@ def validate_installer_payload(installer_path: Path) -> bool:
                     print(result.stdout)
                 if result.stderr:
                     print(result.stderr)
+                # Many Inno Setup installers are not extractable by 7-Zip. Fall back to
+                # a validation-only installer that does a non-admin temp install.
+                seven_zip = None
+
+        if not seven_zip:
+            used_validation_installer = True
+            validation_out = tmp_dir / "validation-installer"
+            validation_installer = _compile_validation_installer(iscc_path, build_mode, fast, validation_out)
+            if not validation_installer:
+                print("Installer validation failed: could not compile validation installer.")
                 return False
-        else:
-            used_silent_install = True
+
             install_dir = tmp_dir / "install"
             install_dir.mkdir(parents=True, exist_ok=True)
-            print("7-Zip not found; using silent temp install for validation.")
+            print(f"Installing validation installer to temp dir: {install_dir}")
             install_cmd = [
-                str(installer_path),
+                str(validation_installer),
                 "/VERYSILENT",
                 "/SUPPRESSMSGBOXES",
                 "/NORESTART",
+                "/SP-",
                 f"/DIR={install_dir}",
             ]
             result = subprocess.run(install_cmd, capture_output=True, text=True)
             if result.returncode != 0:
-                print("Silent install failed:")
+                print("Validation install failed:")
                 if result.stdout:
                     print(result.stdout)
                 if result.stderr:
@@ -670,18 +728,8 @@ def validate_installer_payload(installer_path: Path) -> bool:
         print(f"Running smoke test against installer payload: {extracted_exe}")
         ok = smoke_test_transcode(extracted_exe)
 
-        # Best-effort uninstall if we used silent install
-        if used_silent_install:
-            for unins in tmp_dir.rglob("unins*.exe"):
-                try:
-                    subprocess.run(
-                        [str(unins), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
-                        capture_output=True,
-                        text=True,
-                        timeout=300,
-                    )
-                except Exception:
-                    pass
+        # No uninstall needed; temp dir is deleted automatically. Validation installer mode
+        # does not write PATH/registry entries (see installer.iss VALIDATION guard).
 
         return ok
 
@@ -925,7 +973,7 @@ def main():
                 if build_installer(args.iscc_path, installer_mode, args.fast):
                     installer_path = Path("dist") / ("transcoder-setup-full.exe" if installer_mode == "full" else "transcoder-setup.exe")
                     print("\nValidating installer payload (B)...")
-                    validate_installer_payload(installer_path)
+                    validate_installer_payload(installer_path, installer_mode, args.iscc_path, args.fast)
             else:
                 print(f"\nError: {installer_mode} build not found at {build_dir}")
                 print(f"Build it first with: python build.py --mode {installer_mode}")
@@ -1003,7 +1051,7 @@ def main():
                 if build_installer(args.iscc_path, installer_mode, args.fast):
                     installer_path = Path("dist") / ("transcoder-setup-full.exe" if installer_mode == "full" else "transcoder-setup.exe")
                     print("\nValidating installer payload (B)...")
-                    validate_installer_payload(installer_path)
+                    validate_installer_payload(installer_path, installer_mode, args.iscc_path, args.fast)
             else:
                 print(f"\nWarning: {installer_mode} build not found. Skipping installer.")
                 print(f"Build it first with --mode {installer_mode}")
