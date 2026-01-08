@@ -77,10 +77,10 @@ python build.py --mode both --installer
 ```
 
 Smoke tests:
-- When `--installer` is used, the build script first runs a **dist smoke test** (A) by executing:
+- When `--installer` is used, the build script runs a **dist smoke test** (A) by executing:
   - `transcode --about`
   - `transcode --dry-run`
-- Only if (A) passes, it builds the installer and then performs an **installer payload validation** (B) by extracting the installer to a temp directory (7-Zip if available on Windows, otherwise silent temp install) and running the same commands.
+- Only if (A) passes, it builds the installer. Installer payload validation (B) is currently skipped.
 
 The installers will:
 - Windows: Install to `C:\Program Files\oneShotTranscoder\`, register in Control Panel, optionally add to PATH, create Start Menu shortcuts, provide uninstaller.

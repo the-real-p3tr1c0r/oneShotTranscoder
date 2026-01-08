@@ -1168,8 +1168,9 @@ def main():
                 if system == "Windows":
                     if build_installer(args.iscc_path, installer_mode, args.fast):
                         installer_path = Path("dist") / ("transcoder-setup-full.exe" if installer_mode == "full" else "transcoder-setup.exe")
-                        print("\nValidating installer payload (B)...")
-                        validate_installer_payload(installer_path, installer_mode, args.iscc_path, args.fast)
+                        # Smoke test B (installer payload validation) skipped per user request
+                        # print("\nValidating installer payload (B)...")
+                        # validate_installer_payload(installer_path, installer_mode, args.iscc_path, args.fast)
                 elif system == "Darwin":
                     build_pkg_installer(installer_mode)
             else:
@@ -1255,8 +1256,9 @@ def main():
                 if system == "Windows":
                     if build_installer(args.iscc_path, installer_mode, args.fast):
                         installer_path = Path("dist") / ("transcoder-setup-full.exe" if installer_mode == "full" else "transcoder-setup.exe")
-                        print("\nValidating installer payload (B)...")
-                        validate_installer_payload(installer_path, installer_mode, args.iscc_path, args.fast)
+                        # Smoke test B (installer payload validation) skipped per user request
+                        # print("\nValidating installer payload (B)...")
+                        # validate_installer_payload(installer_path, installer_mode, args.iscc_path, args.fast)
                 elif system == "Darwin":
                     if build_pkg_installer(installer_mode):
                         installer_path = Path("dist") / ("transcoder-full.pkg" if installer_mode == "full" else "transcoder.pkg")
