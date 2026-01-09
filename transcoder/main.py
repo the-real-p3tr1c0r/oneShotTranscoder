@@ -17,17 +17,94 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import argparse
+import os
 import shlex
 import sys
 import traceback
 from pathlib import Path
 
 from transcoder import license as license_info
-from transcoder.constants import DEFAULT_TARGET_SIZE_MB_PER_HOUR
+from transcoder.constants import DEFAULT_EASYOCR_LANGUAGE, DEFAULT_TARGET_SIZE_MB_PER_HOUR
 from transcoder.exceptions import TranscoderError
 from transcoder.metadata import DEFAULT_FILENAME_PATTERN
 from transcoder.transcode import dry_run_all, dry_run_analyze, transcode_all, transcode_file
 from transcoder.utils import check_ffmpeg_available, expand_path_pattern
+
+
+def run_diagnostics() -> None:
+    """Print environment diagnostics (useful for debugging packaged builds)."""
+    print("=== oneShotTranscoder diagnostics ===")
+    print(f"sys.platform: {sys.platform}")
+    print(f"python_version: {sys.version.replace(os.linesep, ' ')}")
+    print(f"sys.executable: {sys.executable}")
+
+    frozen = bool(getattr(sys, "frozen", False))
+    print(f"frozen: {frozen}")
+    if frozen:
+        print(f"sys._MEIPASS: {getattr(sys, '_MEIPASS', None)}")
+
+    print(f"cwd: {Path.cwd()}")
+    print(f"argv: {sys.argv}")
+
+    path_env = os.environ.get("PATH", "")
+    path_entries = [p for p in path_env.split(os.pathsep) if p]
+    print(f"PATH_entries: {len(path_entries)}")
+    for idx, entry in enumerate(path_entries[:20], start=1):
+        print(f"  PATH[{idx:02d}]: {entry}")
+    if len(path_entries) > 20:
+        print("  ... (truncated)")
+
+    print("\n--- torch ---")
+    try:
+        import torch  # type: ignore
+
+        print(f"torch.__version__: {getattr(torch, '__version__', None)}")
+        print(f"torch.version.cuda: {getattr(getattr(torch, 'version', None), 'cuda', None)}")
+        cuda_available = bool(getattr(torch, "cuda", None) and torch.cuda.is_available())
+        print(f"torch.cuda.is_available: {cuda_available}")
+        if cuda_available:
+            try:
+                print(f"torch.cuda.device_count: {torch.cuda.device_count()}")
+                print(f"torch.cuda.current_device: {torch.cuda.current_device()}")
+                print(f"torch.cuda.get_device_name: {torch.cuda.get_device_name(torch.cuda.current_device())}")
+            except Exception as e:
+                print(f"torch.cuda.details_error: {e}")
+        try:
+            cudnn_version = None
+            if getattr(torch, "backends", None) and getattr(torch.backends, "cudnn", None):
+                cudnn_version = torch.backends.cudnn.version()
+            print(f"torch.backends.cudnn.version: {cudnn_version}")
+        except Exception as e:
+            print(f"torch.backends.cudnn.version_error: {e}")
+    except Exception as e:
+        print(f"torch_import_error: {e}")
+
+    print("\n--- easyocr ---")
+    try:
+        import easyocr  # type: ignore
+
+        print(f"easyocr.__version__: {getattr(easyocr, '__version__', None)}")
+        # Avoid downloading models; just instantiate a Reader with minimal verbosity.
+        # This may still fail in broken CUDA/DLL environments, which is exactly what we want to surface.
+        try:
+            import torch  # type: ignore
+
+            use_gpu = bool(getattr(torch, "cuda", None) and torch.cuda.is_available())
+        except Exception:
+            use_gpu = False
+
+        try:
+            reader = easyocr.Reader([DEFAULT_EASYOCR_LANGUAGE], gpu=use_gpu, verbose=False)
+            # Access a trivial attribute to ensure initialization completed.
+            _ = getattr(reader, "lang_list", None)
+            print(f"easyocr.Reader.init_ok: True (gpu={use_gpu})")
+        except Exception as e:
+            print(f"easyocr.Reader.init_ok: False (gpu={use_gpu})")
+            print(f"easyocr.Reader.init_error: {e}")
+    except Exception as e:
+        print(f"easyocr_import_error: {e}")
+
+    print("=== end diagnostics ===")
 
 
 def _parse_arguments_powershell() -> list[str]:
@@ -224,6 +301,11 @@ Default behavior:
              "Use with --targetSizePerHour to control output size (default 900 MB/hour).",
     )
     parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="Print environment diagnostics (torch/easyocr/CUDA details) and exit.",
+    )
+    parser.add_argument(
         "--targetSizePerHour",
         type=float,
         default=DEFAULT_TARGET_SIZE_MB_PER_HOUR,
@@ -310,6 +392,10 @@ def main() -> None:
 
     if getattr(args, "about", False):
         print(license_info.format_about_text())
+        return
+
+    if getattr(args, "diagnose", False):
+        run_diagnostics()
         return
 
     if not check_ffmpeg_available():
