@@ -196,7 +196,6 @@ def extract_sup_frames(sup_path: Path, output_dir: Path) -> list[tuple[Path, flo
     
     # Use Pgs as context manager to decode the SUP file
     # This populates the items list with PgsSubtitleItem objects
-    import cv2
     import numpy as np
     
     # Collect image data and timing inside context manager
@@ -238,49 +237,31 @@ def extract_sup_frames(sup_path: Path, output_dir: Path) -> list[tuple[Path, flo
                 
                 items_data.append((idx, img_data, start_timestamp, end_timestamp))
     
-    # Now save files outside the context manager
-    # Ensure directory exists
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    frames_with_timing = []
+    # Return in-memory frames (avoid OpenCV file IO and color conversion in frozen builds)
+    frames_with_timing: list[tuple[np.ndarray, float, float]] = []
     for idx, img_data, start_timestamp, end_timestamp in items_data:
-        # Save image to file
-        frame_path = output_dir / f"frame_{idx:04d}.png"
-        
-        # Convert grayscale to BGR if needed for OpenCV
-        if len(img_data.shape) == 2:
-            # Grayscale image - convert to BGR
-            img_bgr = cv2.cvtColor(img_data, cv2.COLOR_GRAY2BGR)
-        elif len(img_data.shape) == 3 and img_data.shape[2] == 4:
-            # RGBA image - convert to BGR
-            img_bgr = cv2.cvtColor(img_data, cv2.COLOR_RGBA2BGR)
-        elif len(img_data.shape) == 3 and img_data.shape[2] == 3:
-            # Already BGR or RGB - use as-is
-            img_bgr = img_data
-        else:
-            # Unknown format - try to save as-is
-            img_bgr = img_data
-        
-        # Ensure data type is uint8
-        if img_bgr.dtype != np.uint8:
-            img_bgr = img_bgr.astype(np.uint8)
-        
-        # Save using OpenCV - use absolute path
-        abs_frame_path = frame_path.absolute()
-        success = cv2.imwrite(str(abs_frame_path), img_bgr)
-        if not success:
-            raise SubtitleError(f"cv2.imwrite failed for {abs_frame_path}")
-        
-        # Verify file was created
-        if not abs_frame_path.exists():
-            raise SubtitleError(f"Image file was not created: {abs_frame_path}")
-        
-        frames_with_timing.append((abs_frame_path, start_timestamp, end_timestamp))
+        frame = img_data
+        # Ensure 3-channel uint8 image for OCR without relying on OpenCV.
+        if isinstance(frame, np.ndarray):
+            if frame.ndim == 2:
+                # Grayscale -> 3-channel
+                frame = np.repeat(frame[:, :, None], 3, axis=2)
+            elif frame.ndim == 3 and frame.shape[2] >= 4:
+                # Drop alpha (RGBA/BGRA)
+                frame = frame[:, :, :3]
+            elif frame.ndim == 3 and frame.shape[2] >= 3:
+                frame = frame[:, :, :3]
+
+            if frame.dtype != np.uint8:
+                frame = frame.astype(np.uint8)
+
+        frames_with_timing.append((frame, start_timestamp, end_timestamp))
     
     if not frames_with_timing:
         raise SubtitleError("No frames extracted from SUP file")
     
-    return frames_with_timing
+    # Type ignores here because we now return arrays instead of paths (consumed by convert_sup_to_srt_easyocr).
+    return frames_with_timing  # type: ignore[return-value]
 
 
 def convert_sup_to_srt_easyocr(
@@ -299,8 +280,6 @@ def convert_sup_to_srt_easyocr(
     Raises:
         RuntimeError: If OCR fails
     """
-    import cv2
-    
     temp_dir = sup_path.parent / f"{sup_path.stem}_frames"
     temp_dir.mkdir(parents=True, exist_ok=True)
     
@@ -310,11 +289,6 @@ def convert_sup_to_srt_easyocr(
         if not frames_with_timing:
             raise SubtitleError(f"No frames extracted from {sup_path.name}")
         
-        # Verify frames were actually created
-        for frame_path, _, _ in frames_with_timing:
-            if not frame_path.exists():
-                raise SubtitleError(f"Frame file not created: {frame_path}")
-        
         # Initialize EasyOCR reader.
         # Only enable GPU if CUDA is actually available. Hard-coding gpu=True can
         # cause failures/crashes on systems without a working CUDA runtime.
@@ -323,6 +297,14 @@ def convert_sup_to_srt_easyocr(
         try:
             import torch
             use_gpu = bool(getattr(torch, "cuda", None) and torch.cuda.is_available())
+        except Exception:
+            use_gpu = False
+        # Packaged builds have shown instability in GPU OCR during real workloads even when
+        # CUDA initialization succeeds. Default to CPU OCR when frozen for robustness.
+        try:
+            import sys
+            if bool(getattr(sys, "frozen", False)):
+                use_gpu = False
         except Exception:
             use_gpu = False
         reader = easyocr.Reader([easyocr_lang], gpu=use_gpu, verbose=False)
@@ -337,16 +319,9 @@ def convert_sup_to_srt_easyocr(
             milliseconds = int((secs % 1) * 1000)
             return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
         
-        for frame_path, start_time, end_time in frames_with_timing:
-            # Read image - use absolute path to avoid path issues
-            img = cv2.imread(str(frame_path.absolute()))
-            if img is None:
-                # Try reading directly from the numpy array if file read fails
-                # This shouldn't happen, but as a fallback
-                continue
-            
-            # OCR the image
-            results = reader.readtext(img)
+        for img_bgr, start_time, end_time in frames_with_timing:
+            # OCR the in-memory frame
+            results = reader.readtext(img_bgr)
             
             if results:
                 # Combine all detected text from this frame
@@ -403,8 +378,10 @@ def convert_bitmap_subtitles(
     import sys
     import os
     
-    # Enable ANSI escape sequences on Windows
-    if os.name == 'nt':
+    interactive_output = bool(getattr(sys.stdout, "isatty", lambda: False)())
+
+    # Enable ANSI escape sequences on Windows (only when writing to a real TTY)
+    if os.name == 'nt' and interactive_output:
         try:
             import ctypes
             kernel32 = ctypes.windll.kernel32
@@ -423,6 +400,9 @@ def convert_bitmap_subtitles(
     # Helper function to update a specific line
     def update_line(line_index: int, message: str):
         """Update a specific line (0-indexed from the first Converting message)."""
+        if not interactive_output:
+            print(message)
+            return
         # Calculate how many lines up we need to go
         # After printing all messages, we're at the start of a new line (total_streams lines down)
         # To update line_index, we need to go up (total_streams - line_index) lines

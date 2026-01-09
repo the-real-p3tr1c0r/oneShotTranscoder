@@ -98,6 +98,16 @@ def run_diagnostics() -> None:
             # Access a trivial attribute to ensure initialization completed.
             _ = getattr(reader, "lang_list", None)
             print(f"easyocr.Reader.init_ok: True (gpu={use_gpu})")
+            # Try a minimal OCR call to catch runtime-only failures that occur after init.
+            try:
+                import numpy as np  # type: ignore
+
+                test_img = np.zeros((32, 256, 3), dtype=np.uint8)
+                _ = reader.readtext(test_img)
+                print("easyocr.Reader.readtext_smoke_ok: True")
+            except Exception as e:
+                print("easyocr.Reader.readtext_smoke_ok: False")
+                print(f"easyocr.Reader.readtext_smoke_error: {e}")
         except Exception as e:
             print(f"easyocr.Reader.init_ok: False (gpu={use_gpu})")
             print(f"easyocr.Reader.init_error: {e}")
