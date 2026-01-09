@@ -673,6 +673,7 @@ def smoke_test_transcode(exe_path: Path) -> bool:
     - transcode --about
     - transcode --dry-run
     """
+    exe_path = exe_path.resolve()
     if not exe_path.exists():
         print(f"Smoke test failed: executable not found: {exe_path}")
         return False

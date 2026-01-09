@@ -20,6 +20,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from fractions import Fraction
 from pathlib import Path
 
@@ -85,17 +86,53 @@ def _get_bundled_binary_path(binary_name: str) -> str | None:
     bundled_path = Path(base_path) / "ffmpeg" / binary_name_with_ext
     
     if bundled_path.exists() and bundled_path.is_file():
-        # Make executable on Unix systems
-        if sys.platform != "win32":
-            os.chmod(bundled_path, 0o755)
+        # On macOS, when installed under /Applications, the app bundle contents are
+        # typically owned by root. Attempting to chmod can raise PermissionError.
+        # To stay user-serviceable (and avoid Gatekeeper quirks), we copy binaries to
+        # a user-writable temp dir and execute from there when needed.
+        if sys.platform == "darwin":
+            global _BUNDLED_TEMP_DIR
+            if _BUNDLED_TEMP_DIR is None:
+                _BUNDLED_TEMP_DIR = Path(
+                    tempfile.mkdtemp(prefix="transcoder-bundled-ffmpeg-")
+                )
+
+            local_bin = _BUNDLED_TEMP_DIR / binary_name_with_ext
+            if not local_bin.exists():
+                shutil.copy2(bundled_path, local_bin)
+                try:
+                    os.chmod(local_bin, 0o755)
+                except Exception:
+                    pass
+                # Best-effort: remove quarantine attribute so execution isn't blocked
+                try:
+                    subprocess.run(
+                        ["/usr/bin/xattr", "-d", "com.apple.quarantine", str(local_bin)],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                except Exception:
+                    pass
+
+            resolved_path = str(local_bin)
+        else:
+            # Make executable on Unix systems (best-effort)
+            if sys.platform != "win32":
+                try:
+                    if not os.access(bundled_path, os.X_OK):
+                        os.chmod(bundled_path, 0o755)
+                except Exception:
+                    pass
+            resolved_path = str(bundled_path)
         
         # Cache the path
         if binary_name == "ffmpeg":
-            _BUNDLED_FFMPEG_PATH = str(bundled_path)
+            _BUNDLED_FFMPEG_PATH = resolved_path
         else:
-            _BUNDLED_FFPROBE_PATH = str(bundled_path)
+            _BUNDLED_FFPROBE_PATH = resolved_path
         
-        return str(bundled_path)
+        return resolved_path
     
     return None
 
