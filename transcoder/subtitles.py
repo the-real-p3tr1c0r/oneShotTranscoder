@@ -401,7 +401,7 @@ def convert_bitmap_subtitles(
     def update_line(line_index: int, message: str):
         """Update a specific line (0-indexed from the first Converting message)."""
         if not interactive_output:
-            print(message)
+            print(message, flush=True)
             return
         # Calculate how many lines up we need to go
         # After printing all messages, we're at the start of a new line (total_streams lines down)

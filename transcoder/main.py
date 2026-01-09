@@ -31,6 +31,28 @@ from transcoder.transcode import dry_run_all, dry_run_analyze, transcode_all, tr
 from transcoder.utils import check_ffmpeg_available, expand_path_pattern
 
 
+def configure_console_output() -> None:
+    """Configure stdout/stderr for better streaming output in packaged builds."""
+    try:
+        if not bool(getattr(sys, "frozen", False)):
+            return
+    except Exception:
+        return
+
+    # In frozen Windows executables, stdout/stderr can be heavily buffered even when
+    # invoked from an interactive terminal. Force line-buffering/write-through when possible.
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        try:
+            # Python 3.7+: TextIOWrapper supports reconfigure()
+            stream.reconfigure(line_buffering=True, write_through=True)
+        except Exception:
+            # Best-effort only; do not fail startup if not supported.
+            pass
+
+
 def run_diagnostics() -> None:
     """Print environment diagnostics (useful for debugging packaged builds)."""
     print("=== oneShotTranscoder diagnostics ===")
@@ -403,6 +425,8 @@ def main() -> None:
     if getattr(args, "about", False):
         print(license_info.format_about_text())
         return
+
+    configure_console_output()
 
     if getattr(args, "diagnose", False):
         run_diagnostics()
