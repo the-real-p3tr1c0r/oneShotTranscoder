@@ -315,10 +315,17 @@ def convert_sup_to_srt_easyocr(
             if not frame_path.exists():
                 raise SubtitleError(f"Frame file not created: {frame_path}")
         
-        # Initialize EasyOCR reader
-        # language_code is already in ISO 639-1 format from normalize_language_for_easyocr
+        # Initialize EasyOCR reader.
+        # Only enable GPU if CUDA is actually available. Hard-coding gpu=True can
+        # cause failures/crashes on systems without a working CUDA runtime.
         easyocr_lang = language_code or DEFAULT_EASYOCR_LANGUAGE
-        reader = easyocr.Reader([easyocr_lang], gpu=True, verbose=False)
+        use_gpu = False
+        try:
+            import torch
+            use_gpu = bool(getattr(torch, "cuda", None) and torch.cuda.is_available())
+        except Exception:
+            use_gpu = False
+        reader = easyocr.Reader([easyocr_lang], gpu=use_gpu, verbose=False)
         
         # Process frames and collect text with timing
         subtitle_entries = []
