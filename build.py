@@ -936,8 +936,8 @@ def build_pkg_installer(build_mode: str = "lightweight") -> bool:
     
     with tempfile.TemporaryDirectory(prefix="transcoder-pkg-") as tmp:
         tmp_path = Path(tmp)
-        pkg_root = tmp_path / "root"
-        scripts_dir = tmp_path / "scripts"
+        pkg_root = tmp_path / "root-app"
+        scripts_dir = tmp_path / "scripts-app"
         
         # Create directories
         pkg_root.mkdir()
@@ -954,9 +954,33 @@ def build_pkg_installer(build_mode: str = "lightweight") -> bool:
         macos_dir.mkdir(parents=True)
         resources_dir.mkdir(parents=True)
         
-        # Copy build contents to MacOS directory (where executables go)
-        print(f"Copying files to app bundle...")
-        shutil.copytree(build_dir, macos_dir, dirs_exist_ok=True)
+        # Copy the onedir distribution into Resources, and use a small wrapper in MacOS/.
+        # This avoids PyInstaller switching into ".app mode" (which changes where it looks
+        # for Python and stdlib) while still giving us an app bundle in /Applications.
+        payload_dir = resources_dir / "transcoder-dist"
+        print("Copying files to app bundle payload...")
+        shutil.copytree(build_dir, payload_dir, dirs_exist_ok=True)
+
+        wrapper_path = macos_dir / "transcode"
+        wrapper_contents = """#!/bin/bash
+set -euo pipefail
+
+# Resolve symlinks so this works both when executed directly from the .app bundle
+# and when invoked via a symlink (e.g. /usr/local/bin/transcode -> .../.app/...).
+SCRIPT_PATH="$0"
+if command -v python3 >/dev/null 2>&1; then
+  SCRIPT_PATH="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0")"
+elif command -v python >/dev/null 2>&1; then
+  SCRIPT_PATH="$(python -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0")"
+elif command -v realpath >/dev/null 2>&1; then
+  SCRIPT_PATH="$(realpath "$0")"
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+exec "$SCRIPT_DIR/../Resources/transcoder-dist/transcode" "$@"
+"""
+        wrapper_path.write_text(wrapper_contents, encoding="utf-8")
+        os.chmod(wrapper_path, 0o755)
         
         # Copy additional files to Resources
         for file_name in ["LICENSE", "NOTICE.md", "THIRD_PARTY_LICENSES.md"]:
@@ -1004,13 +1028,6 @@ def build_pkg_installer(build_mode: str = "lightweight") -> bool:
         shutil.copy2(postinstall_src, postinstall_dst)
         os.chmod(postinstall_dst, 0o755)
         
-        # Copy postuninstall script
-        postuninstall_src = repo_scripts_dir / "postuninstall"
-        if postuninstall_src.exists():
-            postuninstall_dst = scripts_dir / "postuninstall"
-            shutil.copy2(postuninstall_src, postuninstall_dst)
-            os.chmod(postuninstall_dst, 0o755)
-        
         # Create component.plist to mark as application
         component_plist = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -1029,13 +1046,13 @@ def build_pkg_installer(build_mode: str = "lightweight") -> bool:
 </array>
 </plist>"""
         
-        component_plist_path = tmp_path / "component.plist"
+        component_plist_path = tmp_path / "component-app.plist"
         with open(component_plist_path, 'w', encoding='utf-8') as f:
             f.write(component_plist)
         
-        # Build component package
-        component_pkg = tmp_path / "component.pkg"
-        print("Running pkgbuild...")
+        # Build component package (app)
+        app_pkg = tmp_path / "component-app.pkg"
+        print("Running pkgbuild (app)...")
         cmd = [
             "pkgbuild",
             "--root", str(pkg_root),
@@ -1044,31 +1061,64 @@ def build_pkg_installer(build_mode: str = "lightweight") -> bool:
             "--install-location", "/",
             "--scripts", str(scripts_dir),
             "--component-plist", str(component_plist_path),
-            str(component_pkg)
+            str(app_pkg)
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             print(f"Error during pkgbuild: {result.stderr}")
             return False
+
+        # Build optional CLI symlink package
+        cli_root = tmp_path / "root-cli"
+        (cli_root / "usr" / "local" / "bin").mkdir(parents=True, exist_ok=True)
+        cli_link = cli_root / "usr" / "local" / "bin" / "transcode"
+        try:
+            if cli_link.is_symlink() or cli_link.exists():
+                cli_link.unlink()
+        except Exception:
+            pass
+        os.symlink("/Applications/oneShotTranscoder.app/Contents/MacOS/transcode", cli_link)
+
+        cli_pkg = tmp_path / "component-cli.pkg"
+        print("Running pkgbuild (optional CLI symlink)...")
+        cmd = [
+            "pkgbuild",
+            "--root", str(cli_root),
+            "--identifier", "com.transcoder.pkg.cli",
+            "--version", "0.1.0",
+            "--install-location", "/",
+            str(cli_pkg)
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"Error during pkgbuild (cli): {result.stderr}")
+            return False
             
-        # Create distribution.xml for productbuild (enables System Settings integration)
+        # Create distribution.xml for productbuild with optional CLI choice
         distribution_xml = """<?xml version="1.0" encoding="UTF-8"?>
 <installer-gui-script minSpecVersion="1">
     <title>One Shot Transcoder</title>
     <organization>com.transcoder</organization>
     <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
-    <options customize="never" require-scripts="false" rootVolumeOnly="true" hostArchitectures="arm64,x86_64"/>
+    <options customize="always" require-scripts="false" rootVolumeOnly="true" hostArchitectures="arm64,x86_64"/>
     <pkg-ref id="com.transcoder.pkg"/>
+    <pkg-ref id="com.transcoder.pkg.cli"/>
     <choices-outline>
-        <line choice="default">
-            <line choice="com.transcoder.pkg"/>
-        </line>
+        <line choice="com.transcoder.pkg"/>
+        <line choice="com.transcoder.pkg.cli"/>
     </choices-outline>
-    <choice id="default"/>
-    <choice id="com.transcoder.pkg" visible="false">
+    <choice id="com.transcoder.pkg" visible="false" start_selected="true">
         <pkg-ref id="com.transcoder.pkg"/>
     </choice>
-    <pkg-ref id="com.transcoder.pkg" version="0.1.0" onConclusion="none">component.pkg</pkg-ref>
+    <choice
+        id="com.transcoder.pkg.cli"
+        title="Command line tool symlink"
+        description="Install optional /usr/local/bin/transcode symlink for Terminal usage"
+        start_selected="true">
+        <pkg-ref id="com.transcoder.pkg.cli"/>
+    </choice>
+    <pkg-ref id="com.transcoder.pkg" version="0.1.0" onConclusion="none">component-app.pkg</pkg-ref>
+    <pkg-ref id="com.transcoder.pkg.cli" version="0.1.0" onConclusion="none">component-cli.pkg</pkg-ref>
 </installer-gui-script>"""
         
         distribution_xml_path = tmp_path / "distribution.xml"
@@ -1082,7 +1132,6 @@ def build_pkg_installer(build_mode: str = "lightweight") -> bool:
             "productbuild",
             "--distribution", str(distribution_xml_path),
             "--package-path", str(tmp_path),
-            "--resources", str(resources_dir),
             str(final_pkg)
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)

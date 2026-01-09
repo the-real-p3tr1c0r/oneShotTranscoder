@@ -24,6 +24,7 @@ hiddenimports = [
     'torch.distributed',  # Required by torch
     'torch.package',  # Required by torch._jit_internal
     'torchvision',
+    'optree',  # Required by torch._dynamo polyfills (PyTorch 2.8+)
     'numpy',
     'PIL',
 ]
