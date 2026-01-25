@@ -25,6 +25,8 @@ import urllib.request
 import tarfile
 import zipfile
 import multiprocessing
+import importlib
+import importlib.util
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional, List, Tuple
@@ -51,8 +53,8 @@ FFMPEG_URLS = {
         "x86_64": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
     },
     "Darwin": {
-        "x86_64": "https://evermeet.cx/ffmpeg/ffmpeg-7.0.zip",
-        "arm64": "https://evermeet.cx/ffmpeg/ffmpeg-7.0.zip",  # Same URL for both
+        "x86_64": "https://evermeet.cx/ffmpeg/ffmpeg-7.1.zip",
+        "arm64": "https://evermeet.cx/ffmpeg/ffmpeg-7.1.zip",  # Fallback if dynamic lookup fails
     },
     "Linux": {
         "x86_64": "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz",
@@ -64,13 +66,76 @@ FFPROBE_URLS = {
         "x86_64": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
     },
     "Darwin": {
-        "x86_64": "https://evermeet.cx/ffmpeg/ffprobe-7.0.zip",
-        "arm64": "https://evermeet.cx/ffmpeg/ffprobe-7.0.zip",
+        "x86_64": "https://evermeet.cx/ffmpeg/ffprobe-7.1.zip",
+        "arm64": "https://evermeet.cx/ffmpeg/ffprobe-7.1.zip",  # Fallback if dynamic lookup fails
     },
     "Linux": {
         "x86_64": "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz",
     },
 }
+
+FULL_BUILD_DEP_IMPORTS = {
+    "torch": "torch",
+    "torchvision": "torchvision",
+    "easyocr": "easyocr",
+    "opencv-python": "cv2",
+}
+
+
+def _missing_full_build_deps() -> list[str]:
+    missing: list[str] = []
+    for package_name, module_name in FULL_BUILD_DEP_IMPORTS.items():
+        try:
+            importlib.import_module(module_name)
+        except Exception:
+            missing.append(package_name)
+    return missing
+
+
+def ensure_full_build_deps(install_missing: bool) -> None:
+    missing = _missing_full_build_deps()
+    if not missing:
+        return
+    missing_display = ", ".join(missing)
+    if not install_missing:
+        print(f"Error: Missing full-build dependencies: {missing_display}")
+        print(f"Install with: {sys.executable} -m pip install {missing_display}")
+        sys.exit(1)
+    print(f"Installing missing full-build dependencies: {missing_display}")
+    subprocess.run([sys.executable, "-m", "pip", "install", *missing], check=True)
+    still_missing = _missing_full_build_deps()
+    if still_missing:
+        print(f"Error: Dependencies still missing after install: {', '.join(still_missing)}")
+        sys.exit(1)
+
+
+def ensure_pyinstaller(install_missing: bool) -> None:
+    if importlib.util.find_spec("PyInstaller") is not None:
+        return
+    if not install_missing:
+        print("Error: PyInstaller is not installed.")
+        print(f"Install it with: {sys.executable} -m pip install pyinstaller")
+        sys.exit(1)
+    print("Installing PyInstaller...")
+    subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller"], check=True)
+
+def _get_evermeet_latest_snapshot_zip(binary: str) -> Optional[str]:
+    rss_url = "https://evermeet.cx/ffmpeg/rss.xml"
+    try:
+        with urllib.request.urlopen(rss_url) as response:
+            payload = response.read().decode("utf-8")
+    except Exception:
+        return None
+    matches = re.findall(rf"{re.escape(binary)}-\d+-g[0-9a-f]+\.zip", payload)
+    if not matches:
+        return None
+    return f"https://evermeet.cx/ffmpeg/{matches[0]}"
+
+
+def _derive_ffprobe_url(ffmpeg_url: str) -> Optional[str]:
+    if "ffmpeg-" not in ffmpeg_url:
+        return None
+    return ffmpeg_url.replace("ffmpeg-", "ffprobe-", 1)
 
 
 def get_platform_info():
@@ -209,6 +274,18 @@ def prepare_ffmpeg_binaries() -> Path:
         raise ValueError(f"Unsupported architecture: {arch} on {system}")
     
     url = FFMPEG_URLS[system][arch]
+    ffprobe_url = FFPROBE_URLS[system][arch]
+
+    if system == "Darwin":
+        latest_ffmpeg = _get_evermeet_latest_snapshot_zip("ffmpeg")
+        if latest_ffmpeg:
+            url = latest_ffmpeg
+            derived_ffprobe = _derive_ffprobe_url(latest_ffmpeg)
+            if derived_ffprobe:
+                ffprobe_url = derived_ffprobe
+        latest_ffprobe = _get_evermeet_latest_snapshot_zip("ffprobe")
+        if latest_ffprobe:
+            ffprobe_url = latest_ffprobe
     
     # Download and extract
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -229,7 +306,7 @@ def prepare_ffmpeg_binaries() -> Path:
             ffprobe_zip = temp_path / "ffprobe.zip"
             
             download_file(url, ffmpeg_zip)
-            download_file(FFPROBE_URLS[system][arch], ffprobe_zip)
+            download_file(ffprobe_url, ffprobe_zip)
             
             # Extract ffmpeg
             with zipfile.ZipFile(ffmpeg_zip, 'r') as z:
@@ -622,8 +699,32 @@ def build_executable(spec_file: Path, build_mode: str = "full") -> None:
     # The wrapper patches importlib.metadata to handle corrupted numpy metadata
     wrapper_script = Path(__file__).parent / "pyinstaller_wrapper.py"
     cmd = [sys.executable, str(wrapper_script), str(spec_file), "--clean", "--noconfirm"]
-    
-    result = subprocess.run(cmd, cwd=Path.cwd())
+
+    with tempfile.TemporaryDirectory(prefix="pyinstaller-sitecustomize-") as temp_dir:
+        temp_path = Path(temp_dir)
+        sitecustomize_path = temp_path / "sitecustomize.py"
+        sitecustomize_path.write_text(
+            "\n".join([
+                "import sys",
+                "from pathlib import Path",
+                "import types",
+                "",
+                "conda_stub = types.ModuleType('PyInstaller.utils.hooks.conda')",
+                "conda_stub.CONDA_META_DIR = Path('__pyinstaller_conda_disabled__')",
+                "def _empty_collect_dynamic_libs(*_args, **_kwargs):",
+                "    return []",
+                "conda_stub.collect_dynamic_libs = _empty_collect_dynamic_libs",
+                "conda_stub.distribution = lambda *_args, **_kwargs: None",
+                "conda_stub.package_distribution = lambda *_args, **_kwargs: None",
+                "sys.modules['PyInstaller.utils.hooks.conda'] = conda_stub",
+                "",
+            ]),
+            encoding="utf-8",
+        )
+        env = os.environ.copy()
+        existing_pythonpath = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = f"{temp_path}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(temp_path)
+        result = subprocess.run(cmd, cwd=Path.cwd(), env=env)
     
     if result.returncode != 0:
         print("Error: PyInstaller build failed")
@@ -1279,6 +1380,11 @@ def main():
         help="Skip building executable, only create installer from existing build"
     )
     parser.add_argument(
+        "--install-deps",
+        action="store_true",
+        help="Install missing build deps (PyInstaller + full-build deps) before building"
+    )
+    parser.add_argument(
         "--fast",
         action="store_true",
         help="Use parallel LZMA2 compression for faster installer builds (larger files)"
@@ -1349,6 +1455,11 @@ def main():
         build_modes.append(("full", "transcode_full.spec"))
     if args.mode in ["lightweight", "both"]:
         build_modes.append(("lightweight", "transcode_lightweight.spec"))
+
+    if any(mode_name == "full" for mode_name, _ in build_modes):
+        ensure_full_build_deps(args.install_deps)
+
+    ensure_pyinstaller(args.install_deps)
     
     for mode_name, spec_name in build_modes:
         print(f"\n{'=' * 60}")

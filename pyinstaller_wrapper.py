@@ -5,6 +5,8 @@ to handle corrupted numpy metadata.
 """
 import sys
 import importlib.metadata
+from pathlib import Path
+import types
 
 # Patch importlib.metadata.version to handle None returns for numpy
 _original_version = importlib.metadata.version
@@ -32,6 +34,18 @@ def patched_version(package_name: str):
         raise
 
 importlib.metadata.version = patched_version
+
+# Provide a safe stub for PyInstaller's conda support to avoid broken conda-meta entries.
+conda_stub = types.ModuleType("PyInstaller.utils.hooks.conda")
+conda_stub.CONDA_META_DIR = Path("__pyinstaller_conda_disabled__")
+
+def _empty_collect_dynamic_libs(*_args, **_kwargs):
+    return []
+
+conda_stub.collect_dynamic_libs = _empty_collect_dynamic_libs
+conda_stub.distribution = lambda *_args, **_kwargs: None
+conda_stub.package_distribution = lambda *_args, **_kwargs: None
+sys.modules["PyInstaller.utils.hooks.conda"] = conda_stub
 
 # Also patch packaging.version to handle None gracefully
 try:

@@ -23,9 +23,6 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-import easyocr
-from pgsrip.sup import Sup as SupSubtitle
-
 from transcoder.constants import (
     DEFAULT_EASYOCR_LANGUAGE,
     IMAGE_BASED_SUBTITLE_CODECS,
@@ -37,6 +34,11 @@ from transcoder.language import (
     normalize_language_tag,
 )
 from transcoder.utils import get_ffmpeg_path, get_ffprobe_path
+
+try:
+    import easyocr
+except ImportError:  # pragma: no cover - handled at runtime when OCR is requested
+    easyocr = None
 
 
 @dataclass
@@ -280,6 +282,9 @@ def convert_sup_to_srt_easyocr(
     Raises:
         RuntimeError: If OCR fails
     """
+    if easyocr is None:
+        raise SubtitleError("easyocr is not installed; cannot OCR bitmap subtitles.")
+
     temp_dir = sup_path.parent / f"{sup_path.stem}_frames"
     temp_dir.mkdir(parents=True, exist_ok=True)
     
