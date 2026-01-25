@@ -5,7 +5,7 @@ Automatic and manual metadata detection for movie and TV filenames.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Pattern
@@ -88,10 +88,15 @@ class MediaType(str, Enum):
 class EpisodeMetadata:
     series_name: str
     episode_title: str
+    episode_title_missing: bool
     year: int | None
     season_number: int | None
     episode_number: int | None
     air_date: str | None = None
+    show_year: int | None = None
+    genres: list[str] = field(default_factory=list)
+    network_name: str | None = None
+    show_status: str | None = None
     pattern_name: str | None = None
 
     @property
@@ -99,6 +104,10 @@ class EpisodeMetadata:
         if self.season_number is None or self.episode_number is None:
             return None
         return f"S{self.season_number:02}E{self.episode_number:02}"
+
+    @property
+    def has_real_episode_title(self) -> bool:
+        return bool(self.episode_title and not self.episode_title_missing)
 
 
 @dataclass(slots=True)
@@ -152,11 +161,13 @@ def match_manual_pattern(source: Path, regex: Pattern[str]) -> MetadataDetection
         season_value = _safe_int(fields.get("season"))
         episode_value = _safe_int(fields.get("episode"))
         series_name = _clean_component(fields.get("series") or fields.get("movie") or source.stem)
-        episode_title = _clean_component(fields.get("title") or "")
+        cleaned_title = _clean_component(fields.get("title") or "")
         year_value = _safe_int(fields.get("year"))
+        missing_title = not bool(cleaned_title)
         metadata = EpisodeMetadata(
             series_name=series_name,
-            episode_title=episode_title or source.stem,
+            episode_title=cleaned_title or source.stem,
+            episode_title_missing=missing_title,
             year=year_value,
             season_number=season_value,
             episode_number=episode_value,
@@ -170,9 +181,11 @@ def match_manual_pattern(source: Path, regex: Pattern[str]) -> MetadataDetection
     elif "title" in fields and "movie" not in fields:
         # Support episode title only patterns
         series_name = _clean_component(fields.get("series") or source.stem)
+        cleaned_title = _clean_component(fields["title"])
         metadata = EpisodeMetadata(
             series_name=series_name,
-            episode_title=_clean_component(fields["title"]),
+            episode_title=cleaned_title,
+            episode_title_missing=not bool(cleaned_title),
             year=_safe_int(fields.get("year")),
             season_number=_safe_int(fields.get("season")),
             episode_number=_safe_int(fields.get("episode")),
@@ -205,6 +218,7 @@ def detect_metadata(source: Path, manual_pattern: str | None = None, media_type_
                         manual_detection.metadata = EpisodeMetadata(
                             series_name=manual_detection.metadata.movie_title,
                             episode_title=manual_detection.metadata.movie_title,
+                            episode_title_missing=True,
                             year=manual_detection.metadata.year,
                             season_number=None,
                             episode_number=None,
@@ -237,6 +251,7 @@ def detect_metadata(source: Path, manual_pattern: str | None = None, media_type_
                 metadata=EpisodeMetadata(
                     series_name=fallback_title,
                     episode_title=fallback_title,
+                    episode_title_missing=True,
                     year=None,
                     season_number=None,
                     episode_number=None,
@@ -435,6 +450,7 @@ def _build_episode_from_groups(
     metadata = EpisodeMetadata(
         series_name=cleaned_series,
         episode_title=cleaned_title or cleaned_series,
+        episode_title_missing=not bool(cleaned_title),
         year=year_value,
         season_number=_safe_int(season_value),
         episode_number=_safe_int(episode_value),
@@ -457,6 +473,7 @@ def _build_episode_from_parts(
     metadata = EpisodeMetadata(
         series_name=cleaned_series or suffix_part or "",
         episode_title=cleaned_title or cleaned_series or suffix_part or "",
+        episode_title_missing=not bool(cleaned_title),
         year=year_value,
         season_number=_safe_int(season_value),
         episode_number=_safe_int(episode_value),

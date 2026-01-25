@@ -30,7 +30,9 @@
 ## Step 5 – Map metadata to ffmpeg arguments
 - Extend ffmpeg metadata mapping so movies apply `title` + `date` while TV keeps the existing Apple TV fields, using the new metadata structures.
 - Verify manual pattern outputs continue to produce correct ffmpeg args.
-- **Status:** Pending
+- **Status:** Done
+- Summary 1: Verified `metadata_to_ffmpeg_args` already maps movie `title`/`date` and TV `title`/`show`/`season_number`/`episode_sort` as required.
+- Summary 2: Left ffmpeg metadata mapping unchanged while adding episode-title enrichment to preserve existing tag behavior.
 
 ## Step 6 – Add automated coverage
 - Create/extend tests (e.g., `tests/test_metadata.py`) covering Radarr/Sonarr movie names, Plex/Jellyfin TV episodes, fallback behavior, and manual pattern overrides.
@@ -42,4 +44,20 @@
 ## Step 7 – Update user-facing docs & config
 - Refresh `README.md`, `config.py` comments, and any CLI help text to describe the new detection capabilities, supported tokens, and fallback behavior.
 - Mention how to supply manual patterns and what metadata is printed to the console.
-- **Status:** Pending
+- **Status:** Done
+- Summary 1: Updated `README.md` with poster lookup behavior, TMDB key sources, and new CLI flags for poster control.
+- Summary 2: Extended `config.py` defaults and CLI help to cover poster resolver selection, forced web lookups, and TMDB key input.
+
+## Step 8 – Enrich TV metadata from web
+- Resolve missing TV episode titles, air dates, show year, and genres from TVmaze and apply them before tagging.
+- Prefer episode air date for TV `date` metadata, with fallback to show year when needed.
+- **Status:** Done
+- Summary 1: Added TVmaze enrichment for episode title, air date, show year, and genres during transcode/dry-run.
+- Summary 2: Updated TV ffmpeg tag mapping to use air date first, then show year fallback.
+
+## Step 9 – Extend TV enrichment and source precedence
+- Add TVmaze fields for network and status and embed them into output metadata.
+- Ensure source file tags take precedence over web lookups for TV metadata.
+- **Status:** Done
+- Summary 1: Added network/status to TVmaze enrichment and included them in TV metadata tags.
+- Summary 2: Applied source file tags before web enrichment so existing metadata overrides lookups.

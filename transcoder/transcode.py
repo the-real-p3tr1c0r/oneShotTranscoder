@@ -36,7 +36,16 @@ from transcoder.metadata import (
     EpisodeMetadata,
     MediaType,
     MovieMetadata,
+    apply_source_metadata,
     detect_media_metadata,
+)
+from transcoder.remote_metadata import (
+    PosterResolver,
+    download_poster_image,
+    resolve_poster_url,
+    resolve_poster_url_auto,
+    resolve_tmdb_api_key,
+    resolve_tvmaze_episode_info,
 )
 from transcoder.subtitles import (
     GeneratedSubtitle,
@@ -75,6 +84,9 @@ def dry_run_analyze(
     convert_bitmap_subs: bool = True,
     target_dir: Path | None = None,
     media_type_override: str | None = None,
+    force_web_poster: bool = False,
+    poster_resolver: str | None = None,
+    tmdb_api_key: str | None = None,
 ) -> None:
     """
     Analyze a video file without processing (dry run mode).
@@ -112,11 +124,67 @@ def dry_run_analyze(
     # Detect metadata
     print("\n--- Metadata Detection ---")
     manual_pattern = filename_pattern or None
+    media_metadata: EpisodeMetadata | MovieMetadata | None = None
     detection = detect_media_metadata(input_path, manual_pattern, media_type_override)
     
+    effective_media_type = None
     if detection:
         media_metadata = detection.metadata
+        effective_media_type = detection.media_type
+    else:
+        print("Type: Unknown (would use filename as title)")
+        fallback_title = _format_fallback_title(input_path.stem)
+        print(f"Fallback title: {fallback_title}")
+        media_metadata = MovieMetadata(movie_title=fallback_title, year=None)
+        effective_media_type = MediaType.MOVIE
+
+    # Probe video file early for source metadata tags
+    try:
+        probe_data = probe_video_file(input_path)
+    except Exception as e:
+        print(f"\nError probing video file: {e}")
+        return
+
+    format_tags = (probe_data.get("format") or {}).get("tags") or {}
+    if (
+        effective_media_type == MediaType.TV_SHOW
+        and isinstance(media_metadata, EpisodeMetadata)
+        and isinstance(format_tags, dict)
+    ):
+        apply_source_metadata(media_metadata, {k: str(v) for k, v in format_tags.items() if v is not None})
+
+    if detection:
         if detection.media_type == MediaType.TV_SHOW and isinstance(media_metadata, EpisodeMetadata):
+            if (
+                not media_metadata.has_real_episode_title
+                or not media_metadata.air_date
+                or not media_metadata.genres
+                or not media_metadata.show_year
+                or not media_metadata.network_name
+                or not media_metadata.show_status
+            ):
+                enrichment = resolve_tvmaze_episode_info(
+                    media_metadata.series_name,
+                    media_metadata.season_number,
+                    media_metadata.episode_number,
+                    media_metadata.air_date,
+                )
+                if enrichment:
+                    if enrichment.episode_title and not media_metadata.has_real_episode_title:
+                        media_metadata.episode_title = enrichment.episode_title
+                        media_metadata.episode_title_missing = False
+                    if enrichment.air_date and not media_metadata.air_date:
+                        media_metadata.air_date = enrichment.air_date
+                    if enrichment.show_year and not media_metadata.show_year:
+                        media_metadata.show_year = enrichment.show_year
+                        if not media_metadata.year:
+                            media_metadata.year = enrichment.show_year
+                    if enrichment.genres and not media_metadata.genres:
+                        media_metadata.genres = enrichment.genres
+                    if enrichment.network_name and not media_metadata.network_name:
+                        media_metadata.network_name = enrichment.network_name
+                    if enrichment.show_status and not media_metadata.show_status:
+                        media_metadata.show_status = enrichment.show_status
             print(f"Type: TV Show")
             print(f"Pattern: {detection.pattern_name}")
             print(f"Series: {media_metadata.series_name}")
@@ -132,17 +200,31 @@ def dry_run_analyze(
             print(f"Title: {media_metadata.movie_title}")
             if media_metadata.year:
                 print(f"Year: {media_metadata.year}")
-    else:
-        print("Type: Unknown (would use filename as title)")
-        fallback_title = _format_fallback_title(input_path.stem)
-        print(f"Fallback title: {fallback_title}")
-    
-    # Probe video file
-    try:
-        probe_data = probe_video_file(input_path)
-    except Exception as e:
-        print(f"\nError probing video file: {e}")
-        return
+
+    resolved_poster_resolver = (poster_resolver or PosterResolver.AUTO).lower()
+    if media_metadata and effective_media_type:
+        tmdb_key = resolve_tmdb_api_key(input_path.parent, tmdb_api_key)
+        local_cover = None
+        if resolved_poster_resolver == PosterResolver.LOCAL:
+            local_cover = find_cover_image(input_path.parent)
+        elif resolved_poster_resolver == PosterResolver.AUTO and not force_web_poster:
+            local_cover = find_cover_image(input_path.parent)
+        if local_cover:
+            print(f"Poster: local ({local_cover.name})")
+        elif resolved_poster_resolver != PosterResolver.LOCAL:
+            if resolved_poster_resolver == PosterResolver.AUTO:
+                poster_result = resolve_poster_url_auto(media_metadata, effective_media_type, tmdb_key)
+            else:
+                poster_result = resolve_poster_url(
+                    media_metadata,
+                    effective_media_type,
+                    resolved_poster_resolver,
+                    tmdb_key,
+                )
+            if poster_result:
+                print(f"Poster: {poster_result.source} ({poster_result.url})")
+            else:
+                print("Poster: none found")
     
     # Show stream information
     print("\n--- Input Streams ---")
@@ -284,6 +366,9 @@ def dry_run_all(
     convert_bitmap_subs: bool = True,
     target_dir: Path | None = None,
     media_type_override: str | None = None,
+    force_web_poster: bool = False,
+    poster_resolver: str | None = None,
+    tmdb_api_key: str | None = None,
 ) -> None:
     """
     Analyze video files without processing (dry run mode for multiple files).
@@ -296,6 +381,9 @@ def dry_run_all(
         convert_bitmap_subs: If True, would convert bitmap subtitles
         target_dir: Optional target directory for output
         media_type_override: Optional type override
+        force_web_poster: If True, skip local poster images and use web sources
+        poster_resolver: Optional poster resolver selector (auto/local/itunes/tmdb/wikimedia)
+        tmdb_api_key: Optional TMDB API key for poster lookups
     """
     # Check if source is a file or directory
     if source_path.is_file():
@@ -316,8 +404,16 @@ def dry_run_all(
     
     for video_file in video_files:
         dry_run_analyze(
-            video_file, rewrap, target_size_mb_per_hour, filename_pattern,
-            convert_bitmap_subs, target_dir, media_type_override
+            video_file,
+            rewrap,
+            target_size_mb_per_hour,
+            filename_pattern,
+            convert_bitmap_subs,
+            target_dir,
+            media_type_override,
+            force_web_poster,
+            poster_resolver,
+            tmdb_api_key,
         )
 
 
@@ -330,6 +426,9 @@ def transcode_file(
     target_dir: Path | None = None,
     media_type_override: str | None = None,
     overwrite: bool = False,
+    force_web_poster: bool = False,
+    poster_resolver: str | None = None,
+    tmdb_api_key: str | None = None,
 ) -> bool:
     """
     Transcode a single video file to MP4.
@@ -343,6 +442,9 @@ def transcode_file(
         target_dir: Optional target directory for output. If None, output is in same directory as input.
         media_type_override: Optional type override ("show" or "movie") to force type detection
         overwrite: If True, overwrite existing output files. If False, add incremental suffix to avoid overwriting.
+        force_web_poster: If True, skip local poster images and use web sources
+        poster_resolver: Optional poster resolver selector (auto/local/itunes/tmdb/wikimedia)
+        tmdb_api_key: Optional TMDB API key for poster lookups
     
     Returns:
         True if successful, False otherwise
@@ -359,8 +461,65 @@ def transcode_file(
     try:
         manual_pattern = filename_pattern or None
         detection = detect_media_metadata(input_path, manual_pattern, media_type_override)
+        effective_media_type = None
         if detection:
             media_metadata = detection.metadata
+            effective_media_type = detection.media_type
+        if media_metadata is None:
+            print("No typematch for metadata extraction, file name used")
+            fallback_title = _format_fallback_title(input_path.stem)
+            media_metadata = MovieMetadata(movie_title=fallback_title, year=None)
+            effective_media_type = MediaType.MOVIE
+            print(f"Detected Movie (fallback): {media_metadata.movie_title}")
+
+        probe_data = probe_video_file(input_path)
+        format_tags = (probe_data.get("format") or {}).get("tags") or {}
+        if (
+            effective_media_type == MediaType.TV_SHOW
+            and isinstance(media_metadata, EpisodeMetadata)
+            and isinstance(format_tags, dict)
+        ):
+            apply_source_metadata(media_metadata, {k: str(v) for k, v in format_tags.items() if v is not None})
+
+        if detection and detection.media_type == MediaType.TV_SHOW and isinstance(media_metadata, EpisodeMetadata):
+            if (
+                not media_metadata.has_real_episode_title
+                or not media_metadata.air_date
+                or not media_metadata.genres
+                or not media_metadata.show_year
+                or not media_metadata.network_name
+                or not media_metadata.show_status
+            ):
+                enrichment = resolve_tvmaze_episode_info(
+                    media_metadata.series_name,
+                    media_metadata.season_number,
+                    media_metadata.episode_number,
+                    media_metadata.air_date,
+                )
+                if enrichment:
+                    if enrichment.episode_title and not media_metadata.has_real_episode_title:
+                        media_metadata.episode_title = enrichment.episode_title
+                        media_metadata.episode_title_missing = False
+                        print(f"Resolved episode title: {enrichment.episode_title}")
+                    if enrichment.air_date and not media_metadata.air_date:
+                        media_metadata.air_date = enrichment.air_date
+                        print(f"Resolved air date: {enrichment.air_date}")
+                    if enrichment.show_year and not media_metadata.show_year:
+                        media_metadata.show_year = enrichment.show_year
+                        if not media_metadata.year:
+                            media_metadata.year = enrichment.show_year
+                        print(f"Resolved show year: {enrichment.show_year}")
+                    if enrichment.genres and not media_metadata.genres:
+                        media_metadata.genres = enrichment.genres
+                        print(f"Resolved genres: {', '.join(enrichment.genres)}")
+                    if enrichment.network_name and not media_metadata.network_name:
+                        media_metadata.network_name = enrichment.network_name
+                        print(f"Resolved network: {enrichment.network_name}")
+                    if enrichment.show_status and not media_metadata.show_status:
+                        media_metadata.show_status = enrichment.show_status
+                        print(f"Resolved status: {enrichment.show_status}")
+
+        if detection:
             if detection.media_type == MediaType.TV_SHOW and isinstance(media_metadata, EpisodeMetadata):
                 episode_label = media_metadata.episode_id or "S??E??"
                 print(
@@ -370,13 +529,7 @@ def transcode_file(
             elif detection.media_type == MediaType.MOVIE and isinstance(media_metadata, MovieMetadata):
                 year_suffix = f" ({media_metadata.year})" if media_metadata.year else ""
                 print(f"Detected Movie ({detection.pattern_name}): {media_metadata.movie_title}{year_suffix}")
-        if media_metadata is None:
-            print("No typematch for metadata extraction, file name used")
-            fallback_title = _format_fallback_title(input_path.stem)
-            media_metadata = MovieMetadata(movie_title=fallback_title, year=None)
-            print(f"Detected Movie (fallback): {media_metadata.movie_title}")
-        
-        probe_data = probe_video_file(input_path)
+
         text_subtitle_streams = get_text_subtitle_streams(probe_data)
         
         # Smart mode: auto-select rewrap vs transcode if not specified
@@ -391,7 +544,13 @@ def transcode_file(
                 effective_rewrap = False
         
         # Find and convert cover image if available
-        cover_image = find_cover_image(input_path.parent)
+        resolved_poster_resolver = (poster_resolver or PosterResolver.AUTO).lower()
+        tmdb_key = resolve_tmdb_api_key(input_path.parent, tmdb_api_key)
+        cover_image = None
+        if resolved_poster_resolver == PosterResolver.LOCAL:
+            cover_image = find_cover_image(input_path.parent)
+        elif resolved_poster_resolver == PosterResolver.AUTO and not force_web_poster:
+            cover_image = find_cover_image(input_path.parent)
         if cover_image:
             try:
                 # Create temp directory for converted image
@@ -403,6 +562,33 @@ def transcode_file(
                 print(f"Found cover image: {cover_image.name}")
             except Exception as e:
                 print(f"Warning: Could not process cover image: {e}")
+                cover_image_path = None
+        elif resolved_poster_resolver != PosterResolver.LOCAL:
+            try:
+                if resolved_poster_resolver == PosterResolver.AUTO:
+                    poster_result = resolve_poster_url_auto(media_metadata, effective_media_type, tmdb_key)
+                else:
+                    poster_result = resolve_poster_url(
+                        media_metadata,
+                        effective_media_type,
+                        resolved_poster_resolver,
+                        tmdb_key,
+                    )
+                if poster_result:
+                    import tempfile
+                    image_temp_dir = Path(tempfile.mkdtemp(prefix=f"{input_path.stem}_poster_"))
+                    temp_dirs.append(image_temp_dir)
+                    downloaded_path = download_poster_image(
+                        poster_result.url,
+                        image_temp_dir,
+                        input_path.stem,
+                    )
+                    cover_image_path = convert_image_for_apple_tv(downloaded_path, image_temp_dir)
+                    print(f"Downloaded poster ({poster_result.source}): {downloaded_path.name}")
+                else:
+                    cover_image_path = None
+            except Exception as e:
+                print(f"Warning: Could not fetch poster image: {e}")
                 cover_image_path = None
         
         # Convert bitmap subtitles if requested
@@ -512,6 +698,9 @@ def transcode_all(
     target_dir: Path | None = None,
     media_type_override: str | None = None,
     overwrite: bool = False,
+    force_web_poster: bool = False,
+    poster_resolver: str | None = None,
+    tmdb_api_key: str | None = None,
 ) -> None:
     """
     Transcode video files from source path (file or directory).
@@ -525,6 +714,9 @@ def transcode_all(
         target_dir: Optional target directory for output. If None, output is in same directory as input.
         media_type_override: Optional type override ("show" or "movie") to force type detection
         overwrite: If True, overwrite existing output files. If False, add incremental suffix to avoid overwriting.
+        force_web_poster: If True, skip local poster images and use web sources
+        poster_resolver: Optional poster resolver selector (auto/local/itunes/tmdb/wikimedia)
+        tmdb_api_key: Optional TMDB API key for poster lookups
     """
     # Check if source is a file or directory
     if source_path.is_file():
@@ -548,7 +740,19 @@ def transcode_all(
     
     success_count = 0
     for video_file in video_files:
-        if transcode_file(video_file, rewrap, target_size_mb_per_hour, filename_pattern, convert_bitmap_subs, target_dir, media_type_override, overwrite):
+        if transcode_file(
+            video_file,
+            rewrap,
+            target_size_mb_per_hour,
+            filename_pattern,
+            convert_bitmap_subs,
+            target_dir,
+            media_type_override,
+            overwrite,
+            force_web_poster,
+            poster_resolver,
+            tmdb_api_key,
+        ):
             success_count += 1
     
     print(f"\nCompleted: {success_count}/{len(video_files)} files processed successfully")

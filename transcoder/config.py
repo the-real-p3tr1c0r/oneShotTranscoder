@@ -33,6 +33,9 @@ class TranscodeConfig:
     filename_pattern: str = DEFAULT_FILENAME_PATTERN
     convert_bitmap_subs: bool = True
     target_dir: Path | None = None
+    force_web_poster: bool = False
+    poster_resolver: str = "auto"
+    tmdb_api_key: str | None = None
     
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""

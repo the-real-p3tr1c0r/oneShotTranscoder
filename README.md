@@ -21,11 +21,14 @@ A Python-based transcoding tool that converts MKV video files to Apple TV-compat
   - Parses episode metadata from filenames (series name, episode title, season/episode numbers, year)
   - Embeds metadata in Apple TV-compatible format
   - Configurable filename pattern matching
+  - Resolves missing TV episode titles, air dates, show year, genres, network, and status via TVmaze (no auth required)
+  - Source file metadata tags take precedence over web lookups when present
 
 - **Cover Image Support**:
   - Automatically finds and embeds cover images from the source directory
   - Converts and resizes images to Apple TV-compatible format (JPEG, max 2000px)
   - Priority: `cover.*` > `front.*` > alphabetical first image
+  - Optional web poster lookup (iTunes primary, TMDB optional, Wikimedia fallback)
 
 - **Flexible Output Options**:
   - Default: Transcode to H.265/HEVC with configurable target file size (default: 900MB/hour)
@@ -117,6 +120,21 @@ Disable bitmap subtitle conversion:
 transcode --noBitmapSubs "video.mkv"
 ```
 
+Force web poster lookup (skip local cover images):
+```bash
+transcode --forceWebPoster "video.mkv"
+```
+
+Pick a specific poster resolver for testing:
+```bash
+transcode --posterResolver itunes "video.mkv"
+```
+
+Provide a TMDB API key via CLI:
+```bash
+transcode --tmdbApiKey "YOUR_TMDB_KEY" "video.mkv"
+```
+
 ### Help
 
 View all available options:
@@ -148,6 +166,12 @@ This extracts:
 - **Audio Codec**: AAC (192kbps)
 - **Subtitles**: mov_text format
 - **Metadata**: Apple TV-compatible tags (title, show, date, season_number, episode_sort)
+
+## Poster Lookup
+
+- Local images are used first unless `--forceWebPoster` is set.
+- Web fallback order (when `--posterResolver` is `auto`): iTunes → TMDB (if a key is available) → Wikimedia Commons.
+- TMDB API keys can be supplied via `--tmdbApiKey`, environment variable `TMDB_API_KEY`, or a `tmdb_api_key.txt` file placed in the source folder.
 
 ## Requirements
 

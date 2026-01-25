@@ -401,6 +401,26 @@ Default behavior:
         help="Analyze files without processing. Shows detected metadata, Apple TV compatibility, "
              "required actions, and output paths. No files will be modified.",
     )
+    parser.add_argument(
+        "--forceWebPoster",
+        action="store_true",
+        help="Force poster lookups from web sources even when local images are present.",
+    )
+    parser.add_argument(
+        "--posterResolver",
+        type=str,
+        choices=["auto", "local", "itunes", "tmdb", "wikimedia"],
+        default="auto",
+        metavar="SOURCE",
+        help="Select a specific poster resolver (auto/local/itunes/tmdb/wikimedia). "
+             "Use for deterministic testing of each source.",
+    )
+    parser.add_argument(
+        "--tmdbApiKey",
+        type=str,
+        metavar="KEY",
+        help="TMDB API key for poster lookups (overrides env TMDB_API_KEY and local key file).",
+    )
     
     try:
         return parser.parse_args()
@@ -501,6 +521,9 @@ def main() -> None:
                             convert_bitmap_subs=not args.noBitmapSubs,
                             target_dir=target_dir,
                             media_type_override=args.type,
+                            force_web_poster=args.forceWebPoster,
+                            poster_resolver=args.posterResolver,
+                            tmdb_api_key=args.tmdbApiKey,
                         )
                     return
                 
@@ -517,6 +540,9 @@ def main() -> None:
                         target_dir=target_dir,
                         media_type_override=args.type,
                         overwrite=args.overwrite,
+                        force_web_poster=args.forceWebPoster,
+                        poster_resolver=args.posterResolver,
+                        tmdb_api_key=args.tmdbApiKey,
                     ):
                         success_count += 1
                 
@@ -546,6 +572,9 @@ def main() -> None:
                 convert_bitmap_subs=not args.noBitmapSubs,
                 target_dir=target_dir,
                 media_type_override=args.type,
+                force_web_poster=args.forceWebPoster,
+                poster_resolver=args.posterResolver,
+                tmdb_api_key=args.tmdbApiKey,
             )
         else:
             transcode_all(
@@ -557,6 +586,9 @@ def main() -> None:
                 target_dir=target_dir,
                 media_type_override=args.type,
                 overwrite=args.overwrite,
+                force_web_poster=args.forceWebPoster,
+                poster_resolver=args.posterResolver,
+                tmdb_api_key=args.tmdbApiKey,
             )
     except TranscoderError as e:
         print(f"Error during transcoding: {e}")

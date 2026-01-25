@@ -242,7 +242,7 @@ def probe_video_file(file_path: Path) -> dict:
             ffprobe_path,
             "-v", "error",
             "-show_entries", "stream=index,codec_name,codec_type,codec_long_name,duration,r_frame_rate,avg_frame_rate",
-            "-show_entries", "format=duration",
+            "-show_entries", "format=duration:format_tags=title,show,date,genre,network,status,season_number,episode_sort,channel",
             "-of", "json",
             str(file_path),
         ]

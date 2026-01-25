@@ -21,6 +21,7 @@ from transcoder.media_patterns import (
                 "season_number": 2,
                 "episode_number": 5,
                 "episode_title": "Series Name",
+                "episode_title_missing": True,
             },
         ),
         (
@@ -31,6 +32,7 @@ from transcoder.media_patterns import (
                 "season_number": 2,
                 "episode_number": 5,
                 "episode_title": "Episode Title",
+                "episode_title_missing": False,
             },
         ),
         (
@@ -40,6 +42,7 @@ from transcoder.media_patterns import (
                 "series_name": "Show Name",
                 "season_number": 1,
                 "episode_number": 2,
+                "episode_title_missing": True,
             },
         ),
         (
@@ -49,6 +52,7 @@ from transcoder.media_patterns import (
                 "series_name": "Daily Show",
                 "air_date": "2025-11-20",
                 "year": 2025,
+                "episode_title_missing": False,
             },
         ),
         (
@@ -58,6 +62,7 @@ from transcoder.media_patterns import (
                 "series_name": "BreakingBad",
                 "season_number": 3,
                 "episode_number": 5,
+                "episode_title_missing": True,
             },
         ),
     ],
