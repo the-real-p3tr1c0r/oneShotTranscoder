@@ -151,7 +151,13 @@ def dry_run_analyze(
         and isinstance(media_metadata, EpisodeMetadata)
         and isinstance(format_tags, dict)
     ):
-        apply_source_metadata(media_metadata, {k: str(v) for k, v in format_tags.items() if v is not None})
+        has_show_tag = "show" in format_tags
+        has_title_tag = "title" in format_tags
+        if has_show_tag and has_title_tag:
+            apply_source_metadata(
+                media_metadata,
+                {k: str(v) for k, v in format_tags.items() if v is not None},
+            )
 
     if detection:
         if detection.media_type == MediaType.TV_SHOW and isinstance(media_metadata, EpisodeMetadata):
@@ -225,6 +231,10 @@ def dry_run_analyze(
                 print(f"Poster: {poster_result.source} ({poster_result.url})")
             else:
                 print("Poster: none found")
+        else:
+            print("Poster: none found")
+    else:
+        print("Poster: none found")
     
     # Show stream information
     print("\n--- Input Streams ---")
@@ -479,7 +489,13 @@ def transcode_file(
             and isinstance(media_metadata, EpisodeMetadata)
             and isinstance(format_tags, dict)
         ):
-            apply_source_metadata(media_metadata, {k: str(v) for k, v in format_tags.items() if v is not None})
+            has_show_tag = "show" in format_tags
+            has_title_tag = "title" in format_tags
+            if has_show_tag and has_title_tag:
+                apply_source_metadata(
+                    media_metadata,
+                    {k: str(v) for k, v in format_tags.items() if v is not None},
+                )
 
         if detection and detection.media_type == MediaType.TV_SHOW and isinstance(media_metadata, EpisodeMetadata):
             if (
@@ -529,7 +545,7 @@ def transcode_file(
             elif detection.media_type == MediaType.MOVIE and isinstance(media_metadata, MovieMetadata):
                 year_suffix = f" ({media_metadata.year})" if media_metadata.year else ""
                 print(f"Detected Movie ({detection.pattern_name}): {media_metadata.movie_title}{year_suffix}")
-
+        
         text_subtitle_streams = get_text_subtitle_streams(probe_data)
         
         # Smart mode: auto-select rewrap vs transcode if not specified

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
+import ssl
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -25,10 +27,22 @@ TVMAZE_EPISODE_BY_NUMBER_URL = "https://api.tvmaze.com/shows/{show_id}/episodeby
 TVMAZE_EPISODES_BY_DATE_URL = "https://api.tvmaze.com/shows/{show_id}/episodesbydate"
 WIKIMEDIA_API_URL = "https://commons.wikimedia.org/w/api.php"
 
+logger = logging.getLogger(__name__)
+
+
+def _create_ssl_context() -> ssl.SSLContext:
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
 
 class PosterResolver(str):
     AUTO = "auto"
     LOCAL = "local"
+    TVMAZE = "tvmaze"
     ITUNES = "itunes"
     TMDB = "tmdb"
     WIKIMEDIA = "wikimedia"
@@ -55,8 +69,16 @@ def _fetch_json(url: str, timeout_seconds: int = DEFAULT_HTTP_TIMEOUT_SECONDS) -
         url,
         headers={"User-Agent": DEFAULT_USER_AGENT},
     )
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        payload = response.read().decode("utf-8")
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=timeout_seconds,
+            context=_create_ssl_context(),
+        ) as response:
+            payload = response.read().decode("utf-8")
+    except Exception as error:
+        logger.warning("Failed to fetch URL %s: %s", url, error)
+        raise
     return json.loads(payload)
 
 
@@ -252,6 +274,9 @@ def resolve_poster_url(
     resolver: str,
     tmdb_api_key: str | None,
 ) -> PosterResolutionResult | None:
+    if resolver == PosterResolver.TVMAZE:
+        url = _search_tvmaze_poster(metadata, media_type)
+        return PosterResolutionResult(url, "tvmaze") if url else None
     if resolver == PosterResolver.ITUNES:
         url = _search_itunes_poster(metadata, media_type)
         return PosterResolutionResult(url, "itunes") if url else None
@@ -271,6 +296,10 @@ def resolve_poster_url_auto(
     media_type: MediaType,
     tmdb_api_key: str | None,
 ) -> PosterResolutionResult | None:
+    url = _search_tvmaze_poster(metadata, media_type)
+    if url:
+        return PosterResolutionResult(url, "tvmaze")
+
     url = _search_itunes_poster(metadata, media_type)
     if url:
         return PosterResolutionResult(url, "itunes")
@@ -287,6 +316,30 @@ def resolve_poster_url_auto(
     return None
 
 
+def _search_tvmaze_poster(metadata: EpisodeMetadata | MovieMetadata, media_type: MediaType) -> str | None:
+    if media_type == MediaType.TV_SHOW and isinstance(metadata, EpisodeMetadata):
+        term = metadata.series_name
+    else:
+        term = metadata.movie_title if isinstance(metadata, MovieMetadata) else ""
+    if not term:
+        return None
+    show_id = _search_tvmaze_show_id(term)
+    if show_id is None:
+        return None
+    show_info = _fetch_tvmaze_show_info(show_id)
+    if not isinstance(show_info, dict):
+        return None
+    image_info = show_info.get("image")
+    if isinstance(image_info, dict):
+        original = image_info.get("original")
+        if isinstance(original, str) and original.strip():
+            return original.strip()
+        medium = image_info.get("medium")
+        if isinstance(medium, str) and medium.strip():
+            return medium.strip()
+    return None
+
+
 def download_poster_image(url: str, dest_dir: Path, filename_prefix: str) -> Path:
     dest_dir.mkdir(parents=True, exist_ok=True)
     extension = _guess_extension(url)
@@ -296,55 +349,92 @@ def download_poster_image(url: str, dest_dir: Path, filename_prefix: str) -> Pat
         url,
         headers={"User-Agent": DEFAULT_USER_AGENT},
     )
-    with urllib.request.urlopen(request, timeout=DEFAULT_HTTP_TIMEOUT_SECONDS) as response:
-        with output_path.open("wb") as handle:
-            handle.write(response.read())
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=DEFAULT_HTTP_TIMEOUT_SECONDS,
+            context=_create_ssl_context(),
+        ) as response:
+            with output_path.open("wb") as handle:
+                handle.write(response.read())
+    except Exception as error:
+        logger.warning("Failed to download poster %s: %s", url, error)
+        raise
     return output_path
 
 
 def _search_itunes_poster(metadata: EpisodeMetadata | MovieMetadata, media_type: MediaType) -> str | None:
     if media_type == MediaType.TV_SHOW and isinstance(metadata, EpisodeMetadata):
         term = metadata.series_name
-        media = "tvShow"
         entity = "tvSeason"
+        if not term:
+            return None
+        attempts = []
+        if metadata.season_number is not None:
+            attempts.extend(
+                [
+                    {"term": f"{term}, Season {metadata.season_number}", "entity": entity, "limit": 5},
+                    {"term": f"{term} Season {metadata.season_number}", "entity": entity, "limit": 5},
+                ]
+            )
+        attempts.extend(
+            [
+                {"term": term, "media": "tvShow", "entity": entity, "limit": 5},
+                {"term": term, "entity": entity, "limit": 5},
+            ]
+        )
     else:
         term = metadata.movie_title if isinstance(metadata, MovieMetadata) else ""
-        media = "movie"
-        entity = "movie"
-    if not term:
-        return None
-    query_terms = term
-    if isinstance(metadata, MovieMetadata) and metadata.year:
-        query_terms = f"{term} {metadata.year}"
-    params = {
-        "term": query_terms,
-        "media": media,
-        "entity": entity,
-        "limit": 1,
-    }
-    url = f"{ITUNES_SEARCH_URL}?{urllib.parse.urlencode(params)}"
-    try:
-        data = _fetch_json(url)
-    except Exception:
-        return None
-    if not isinstance(data, dict):
-        return None
-    results = data.get("results")
-    if not isinstance(results, list) or not results:
-        return None
-    first = results[0]
-    if not isinstance(first, dict):
-        return None
-    artwork = first.get("artworkUrl100") or first.get("artworkUrl60")
-    if not artwork:
-        return None
-    return _upgrade_itunes_artwork_url(str(artwork))
+        if not term:
+            return None
+        query_terms = term
+        if isinstance(metadata, MovieMetadata) and metadata.year:
+            query_terms = f"{term} {metadata.year}"
+        attempts = [{"term": query_terms, "media": "movie", "entity": "movie", "limit": 5}]
+
+    attempts_with_country = attempts + [{**params, "country": "us"} for params in attempts]
+    season_token = None
+    if media_type == MediaType.TV_SHOW and isinstance(metadata, EpisodeMetadata):
+        if metadata.season_number is not None:
+            season_token = f"Season {metadata.season_number}"
+
+    for params in attempts_with_country:
+        url = f"{ITUNES_SEARCH_URL}?{urllib.parse.urlencode(params)}"
+        try:
+            data = _fetch_json(url)
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        results = data.get("results")
+        if not isinstance(results, list) or not results:
+            continue
+        candidate_results = results
+        if season_token:
+            season_matches = [
+                result
+                for result in results
+                if isinstance(result, dict)
+                and isinstance(result.get("collectionName"), str)
+                and season_token.lower() in result.get("collectionName", "").lower()
+            ]
+            if season_matches:
+                candidate_results = season_matches
+        for result in candidate_results:
+            if not isinstance(result, dict):
+                continue
+            artwork = result.get("artworkUrl100") or result.get("artworkUrl60")
+            if not artwork:
+                continue
+            return _upgrade_itunes_artwork_url(str(artwork))
+    return None
 
 
 def _upgrade_itunes_artwork_url(url: str, target_size: int = 2000) -> str:
     size_token = f"{target_size}x{target_size}bb"
     upgraded = re.sub(r"\d+x\d+bb", size_token, url)
     upgraded = re.sub(r"\d+x\d+", size_token, upgraded)
+    upgraded = upgraded.replace("bbbb", "bb")
     return upgraded
 
 

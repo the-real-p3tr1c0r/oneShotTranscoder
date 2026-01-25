@@ -27,6 +27,7 @@ hiddenimports = [
     'optree',  # Required by torch._dynamo polyfills (PyTorch 2.8+)
     'numpy',
     'PIL',
+    'certifi',
 ]
 
 # Collect data files / submodules for packages that need them
@@ -36,6 +37,11 @@ try:
     setuptools_datas = collect_data_files('setuptools')
 except Exception:
     setuptools_datas = []
+
+try:
+    certifi_datas = collect_data_files('certifi')
+except Exception:
+    certifi_datas = []
 
 # Babelfish needs its language/country data files
 try:
@@ -80,7 +86,7 @@ except Exception:
     rebulk_datas = []
 
 # Combine all data files
-package_datas = setuptools_datas + babelfish_datas + easyocr_datas + cleanit_datas + pgsrip_datas + trakit_datas + guessit_datas + rebulk_datas
+package_datas = setuptools_datas + certifi_datas + babelfish_datas + easyocr_datas + cleanit_datas + pgsrip_datas + trakit_datas + guessit_datas + rebulk_datas
 
 # Babelfish loads converters dynamically (via importlib); ensure converter submodules are bundled
 try:

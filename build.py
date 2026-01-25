@@ -699,7 +699,7 @@ def build_executable(spec_file: Path, build_mode: str = "full") -> None:
     # The wrapper patches importlib.metadata to handle corrupted numpy metadata
     wrapper_script = Path(__file__).parent / "pyinstaller_wrapper.py"
     cmd = [sys.executable, str(wrapper_script), str(spec_file), "--clean", "--noconfirm"]
-
+    
     with tempfile.TemporaryDirectory(prefix="pyinstaller-sitecustomize-") as temp_dir:
         temp_path = Path(temp_dir)
         sitecustomize_path = temp_path / "sitecustomize.py"

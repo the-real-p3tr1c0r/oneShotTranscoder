@@ -29,6 +29,7 @@ hiddenimports = [
     'torchvision',
     'numpy',
     'PIL',
+    'certifi',
 ]
 
 # Collect setuptools data files for pkg_resources
@@ -40,13 +41,18 @@ try:
 except Exception:
     setuptools_datas = []
 
+try:
+    certifi_datas = collect_data_files('certifi')
+except Exception:
+    certifi_datas = []
+
 # Collect all Python files from transcoder package
 # Note: datas will be populated by build script before this is executed
 a = Analysis(
     ['transcoder/main.py'],
     pathex=[str(project_root)],
     binaries=[],
-    datas=(datas if datas else []) + setuptools_datas,  # Use datas if defined, otherwise empty list
+    datas=(datas if datas else []) + setuptools_datas + certifi_datas,  # Use datas if defined, otherwise empty list
     hiddenimports=hiddenimports,
     hookspath=['hooks'],
     hooksconfig={

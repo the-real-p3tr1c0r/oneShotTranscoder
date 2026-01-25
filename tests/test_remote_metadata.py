@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,8 @@ from transcoder.media_patterns import EpisodeMetadata, MediaType, MovieMetadata
 from transcoder.metadata import apply_source_metadata, metadata_to_ffmpeg_args
 from transcoder.remote_metadata import (
     PosterResolver,
+    _fetch_json,
+    _search_itunes_poster,
     resolve_poster_url,
     resolve_poster_url_auto,
     resolve_tmdb_api_key,
@@ -73,14 +76,15 @@ def test_resolve_poster_url_auto_fallback(monkeypatch: pytest.MonkeyPatch) -> No
         episode_number=1,
     )
 
+    monkeypatch.setattr("transcoder.remote_metadata._search_tvmaze_poster", lambda *_: "tvmaze-url")
     monkeypatch.setattr("transcoder.remote_metadata._search_itunes_poster", lambda *_: None)
     monkeypatch.setattr("transcoder.remote_metadata._search_tmdb_poster", lambda *_: "tmdb-url")
     monkeypatch.setattr("transcoder.remote_metadata._search_wikimedia_poster", lambda *_: "wikimedia-url")
 
     result = resolve_poster_url_auto(episode, MediaType.TV_SHOW, "tmdb-key")
     assert result is not None
-    assert result.url == "tmdb-url"
-    assert result.source == "tmdb"
+    assert result.url == "tvmaze-url"
+    assert result.source == "tvmaze"
 
 
 def test_metadata_to_ffmpeg_args_tv_date_priority() -> None:
@@ -134,3 +138,113 @@ def test_apply_source_metadata_overrides() -> None:
     assert updated.show_status == "Running"
     assert updated.season_number == 3
     assert updated.episode_number == 4
+
+
+def test_apply_source_metadata_skips_without_show() -> None:
+    episode = EpisodeMetadata(
+        series_name="Detected Show",
+        episode_title="Detected Episode",
+        episode_title_missing=False,
+        year=2010,
+        season_number=1,
+        episode_number=2,
+    )
+    format_tags = {
+        "title": "Tagged Episode",
+        "date": "2024-05-01",
+    }
+    updated = apply_source_metadata(episode, format_tags)
+    assert updated.series_name == "Detected Show"
+    assert updated.episode_title == "Detected Episode"
+    assert updated.air_date is None
+
+
+def test_apply_source_metadata_skips_without_title() -> None:
+    episode = EpisodeMetadata(
+        series_name="Detected Show",
+        episode_title="Detected Episode",
+        episode_title_missing=False,
+        year=2010,
+        season_number=1,
+        episode_number=2,
+    )
+    format_tags = {
+        "show": "Tagged Show",
+        "date": "2024-05-01",
+    }
+    updated = apply_source_metadata(episode, format_tags)
+    assert updated.series_name == "Detected Show"
+    assert updated.episode_title == "Detected Episode"
+    assert updated.air_date is None
+
+
+def test_fetch_json_logs_warning(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    def raise_error(*_args, **_kwargs):
+        raise OSError("boom")
+
+    monkeypatch.setattr("urllib.request.urlopen", raise_error)
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(OSError):
+            _fetch_json("https://example.com/data")
+    assert "Failed to fetch URL" in caplog.text
+
+
+def test_search_itunes_poster_tv_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    episode = EpisodeMetadata(
+        series_name="Prison Break",
+        episode_title="Manhunt",
+        episode_title_missing=False,
+        year=2006,
+        season_number=2,
+        episode_number=1,
+    )
+    responses = [
+        {"resultCount": 0, "results": []},
+        {
+            "resultCount": 1,
+            "results": [
+                {
+                    "artworkUrl100": "https://example.com/100x100bb.jpg",
+                }
+            ],
+        },
+    ]
+    calls = {"count": 0}
+
+    def fake_fetch_json(_url: str):
+        index = calls["count"]
+        calls["count"] += 1
+        return responses[min(index, len(responses) - 1)]
+
+    monkeypatch.setattr("transcoder.remote_metadata._fetch_json", fake_fetch_json)
+    url = _search_itunes_poster(episode, MediaType.TV_SHOW)
+    assert url == "https://example.com/2000x2000bb.jpg"
+    assert calls["count"] >= 2
+
+
+def test_search_itunes_poster_prefers_season_match(monkeypatch: pytest.MonkeyPatch) -> None:
+    episode = EpisodeMetadata(
+        series_name="Prison Break",
+        episode_title="Manhunt",
+        episode_title_missing=False,
+        year=2006,
+        season_number=2,
+        episode_number=1,
+    )
+    response = {
+        "resultCount": 2,
+        "results": [
+            {
+                "collectionName": "Prison Break, Season 3",
+                "artworkUrl100": "https://example.com/100x100bb.jpg",
+            },
+            {
+                "collectionName": "Prison Break, Season 2",
+                "artworkUrl100": "https://example.com/season2_100x100bb.jpg",
+            },
+        ],
+    }
+
+    monkeypatch.setattr("transcoder.remote_metadata._fetch_json", lambda _url: response)
+    url = _search_itunes_poster(episode, MediaType.TV_SHOW)
+    assert url == "https://example.com/season2_2000x2000bb.jpg"

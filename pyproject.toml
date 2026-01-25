@@ -13,6 +13,7 @@ dependencies = [
     "opencv-python",
     "babelfish",
     "pgsrip",
+    "certifi",
 ]
 
 [project.scripts]

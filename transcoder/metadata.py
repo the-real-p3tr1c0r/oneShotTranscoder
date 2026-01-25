@@ -38,14 +38,14 @@ def apply_source_metadata(metadata: EpisodeMetadata, format_tags: dict[str, str]
     """
     Apply format-level tags from the source file, overriding detected values.
     """
-    title = format_tags.get("title")
-    if title:
-        metadata.episode_title = title
-        metadata.episode_title_missing = False
+    title_tag = format_tags.get("title")
+    show_tag = format_tags.get("show")
+    if not title_tag or not show_tag:
+        return metadata
 
-    show = format_tags.get("show")
-    if show:
-        metadata.series_name = show
+    metadata.episode_title = title_tag
+    metadata.episode_title_missing = False
+    metadata.series_name = show_tag
 
     date_tag = format_tags.get("date")
     if date_tag:
