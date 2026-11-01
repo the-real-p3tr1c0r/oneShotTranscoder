@@ -10,7 +10,8 @@ LICENSE_NAME = "GPL-3.0-or-later"
 
 FFMPEG_SOURCES = {
     "Windows": "BtbN FFmpeg Builds (https://github.com/BtbN/FFmpeg-Builds)",
-    "macOS": "evermeet.cx FFmpeg distributions (https://evermeet.cx/ffmpeg)",
+    "macOS (arm64)": "Martin Riedl FFmpeg Builds (https://ffmpeg.martin-riedl.de)",
+    "macOS (x86_64)": "evermeet.cx FFmpeg distributions (https://evermeet.cx/ffmpeg)",
     "Linux": "johnvansickle.com static builds (https://johnvansickle.com/ffmpeg/)",
 }
 

@@ -47,14 +47,14 @@ UPX_URLS = {
     }
 }
 
-# FFmpeg download URLs (using static builds from BtbN/ffmpeg-builds)
+# FFmpeg download URLs (using static builds from BtbN/ffmpeg-builds, evermeet.cx, martin-riedl.de, johnvansickle.com)
 FFMPEG_URLS = {
     "Windows": {
         "x86_64": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
     },
     "Darwin": {
         "x86_64": "https://evermeet.cx/ffmpeg/ffmpeg-7.1.zip",
-        "arm64": "https://evermeet.cx/ffmpeg/ffmpeg-7.1.zip",  # Fallback if dynamic lookup fails
+        "arm64": "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/snapshot/ffmpeg.zip",
     },
     "Linux": {
         "x86_64": "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz",
@@ -67,7 +67,7 @@ FFPROBE_URLS = {
     },
     "Darwin": {
         "x86_64": "https://evermeet.cx/ffmpeg/ffprobe-7.1.zip",
-        "arm64": "https://evermeet.cx/ffmpeg/ffprobe-7.1.zip",  # Fallback if dynamic lookup fails
+        "arm64": "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/snapshot/ffprobe.zip",
     },
     "Linux": {
         "x86_64": "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz",
@@ -158,7 +158,12 @@ def download_file(url: str, dest_path: Path) -> None:
     """Download a file from URL to destination path."""
     print(f"Downloading {url}...")
     try:
-        urllib.request.urlretrieve(url, dest_path)
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "oneShotTranscoder-Build/1.0"},
+        )
+        with urllib.request.urlopen(req) as response, open(dest_path, "wb") as out_file:
+            shutil.copyfileobj(response, out_file)
         print(f"Downloaded to {dest_path}")
     except Exception as e:
         print(f"Error downloading {url}: {e}")
@@ -237,6 +242,23 @@ def extract_ffmpeg_linux(tar_path: Path, output_dir: Path) -> tuple[Path, Path]:
     return ffmpeg_bin, ffprobe_bin
 
 
+def _verify_macos_binary_arch(binary_path: Path, expected_arch: str) -> bool:
+    """Verify that a macOS Mach-O binary supports the expected architecture."""
+    if not binary_path.exists():
+        return False
+    try:
+        result = subprocess.run(
+            ["/usr/bin/file", "-b", str(binary_path)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        file_info = result.stdout.lower()
+        return expected_arch.lower() in file_info
+    except Exception:
+        return True
+
+
 def prepare_ffmpeg_binaries() -> Path:
     """
     Download and prepare ffmpeg binaries for the current platform.
@@ -263,8 +285,18 @@ def prepare_ffmpeg_binaries() -> Path:
         ffmpeg_bin = ffmpeg_dir / "ffmpeg"
         ffprobe_bin = ffmpeg_dir / "ffprobe"
         if ffmpeg_bin.exists() and ffprobe_bin.exists():
-            print("FFmpeg binaries already exist, skipping download")
-            return ffmpeg_dir
+            if system == "Darwin" and not (
+                _verify_macos_binary_arch(ffmpeg_bin, arch)
+                and _verify_macos_binary_arch(ffprobe_bin, arch)
+            ):
+                print(
+                    f"Existing FFmpeg binaries in {ffmpeg_dir} do not match target architecture ({arch}); re-downloading..."
+                )
+                ffmpeg_bin.unlink(missing_ok=True)
+                ffprobe_bin.unlink(missing_ok=True)
+            else:
+                print("FFmpeg binaries already exist, skipping download")
+                return ffmpeg_dir
     
     # Get download URL
     if system not in FFMPEG_URLS:
@@ -276,7 +308,8 @@ def prepare_ffmpeg_binaries() -> Path:
     url = FFMPEG_URLS[system][arch]
     ffprobe_url = FFPROBE_URLS[system][arch]
 
-    if system == "Darwin":
+    # evermeet.cx only distributes Intel (x86_64) builds; only use its RSS snapshot lookup on x86_64
+    if system == "Darwin" and arch == "x86_64":
         latest_ffmpeg = _get_evermeet_latest_snapshot_zip("ffmpeg")
         if latest_ffmpeg:
             url = latest_ffmpeg
@@ -336,6 +369,14 @@ def prepare_ffmpeg_binaries() -> Path:
             # Make executable
             os.chmod(ffmpeg_dir / "ffmpeg", 0o755)
             os.chmod(ffmpeg_dir / "ffprobe", 0o755)
+
+            if not (
+                _verify_macos_binary_arch(ffmpeg_dir / "ffmpeg", arch)
+                and _verify_macos_binary_arch(ffmpeg_dir / "ffprobe", arch)
+            ):
+                raise RuntimeError(
+                    f"Downloaded FFmpeg/ffprobe binaries do not match expected macOS architecture ({arch})"
+                )
             
         elif system == "Linux":
             tar_path = temp_path / "ffmpeg.tar.xz"

@@ -40,6 +40,23 @@ _BUNDLED_FFPROBE_PATH: str | None = None
 _BUNDLED_TEMP_DIR: Path | None = None
 
 
+def _is_binary_runnable(binary_path: str | Path) -> bool:
+    """Verify that a binary can actually be executed on the current CPU/OS."""
+    try:
+        result = subprocess.run(
+            [str(binary_path), "-version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        return result.returncode == 0
+    except OSError:
+        return False
+    except Exception:
+        return False
+
+
 def _get_bundled_binary_path(binary_name: str) -> str | None:
     """
     Get path to bundled ffmpeg binary if running from PyInstaller executable.
@@ -126,6 +143,10 @@ def _get_bundled_binary_path(binary_name: str) -> str | None:
                     pass
             resolved_path = str(bundled_path)
         
+        # Verify the bundled binary is runnable on this host (e.g., reject x86_64 on arm64 without Rosetta)
+        if not _is_binary_runnable(resolved_path):
+            return None
+
         # Cache the path
         if binary_name == "ffmpeg":
             _BUNDLED_FFMPEG_PATH = resolved_path
@@ -154,7 +175,7 @@ def get_ffmpeg_path() -> str:
     
     # Fall back to system binary
     system_path = shutil.which("ffmpeg")
-    if system_path:
+    if system_path and _is_binary_runnable(system_path):
         return system_path
     
     raise FFmpegError("ffmpeg not found. Please install ffmpeg or use the bundled executable.")
@@ -177,7 +198,7 @@ def get_ffprobe_path() -> str:
     
     # Fall back to system binary
     system_path = shutil.which("ffprobe")
-    if system_path:
+    if system_path and _is_binary_runnable(system_path):
         return system_path
     
     raise FFmpegError("ffprobe not found. Please install ffmpeg or use the bundled executable.")
