@@ -135,6 +135,11 @@ Provide a TMDB API key via CLI:
 transcode --tmdbApiKey "YOUR_TMDB_KEY" "video.mkv"
 ```
 
+Automatically import into Apple TV (`TV.app`) on macOS (skipping duplicates already in the library) and delete the staging `.mp4` afterwards:
+```bash
+transcode --import
+```
+
 ### Help
 
 View all available options:

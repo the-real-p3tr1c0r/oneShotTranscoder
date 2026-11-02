@@ -421,6 +421,13 @@ Default behavior:
         metavar="KEY",
         help="TMDB API key for poster lookups (overrides env TMDB_API_KEY and local key file).",
     )
+    parser.add_argument(
+        "--import",
+        dest="import_to_apple_tv",
+        action="store_true",
+        help="Automatically import converted MP4 files into the macOS Apple TV library "
+             "(skipping items already in TV.app) and clean up the staging .mp4 file afterwards.",
+    )
     
     try:
         return parser.parse_args()
@@ -524,11 +531,22 @@ def main() -> None:
                             force_web_poster=args.forceWebPoster,
                             poster_resolver=args.posterResolver,
                             tmdb_api_key=args.tmdbApiKey,
+                            import_to_apple_tv=args.import_to_apple_tv,
                         )
                     return
                 
                 # Process matched files directly
                 print(f"Found {len(video_files)} video file(s) matching pattern: {source_str}\n")
+                library_tracks = None
+                if getattr(args, "import_to_apple_tv", False):
+                    from transcoder.apple_tv_library import (
+                        fetch_apple_tv_library_tracks,
+                        is_apple_tv_import_supported,
+                    )
+                    if not is_apple_tv_import_supported():
+                        print("Error: --import is only supported on macOS with Apple TV (TV.app).")
+                        sys.exit(1)
+                    library_tracks = fetch_apple_tv_library_tracks()
                 success_count = 0
                 for video_file in video_files:
                     if transcode_file(
@@ -543,6 +561,8 @@ def main() -> None:
                         force_web_poster=args.forceWebPoster,
                         poster_resolver=args.posterResolver,
                         tmdb_api_key=args.tmdbApiKey,
+                        import_to_apple_tv=args.import_to_apple_tv,
+                        library_tracks=library_tracks,
                     ):
                         success_count += 1
                 
@@ -575,6 +595,7 @@ def main() -> None:
                 force_web_poster=args.forceWebPoster,
                 poster_resolver=args.posterResolver,
                 tmdb_api_key=args.tmdbApiKey,
+                import_to_apple_tv=args.import_to_apple_tv,
             )
         else:
             transcode_all(
@@ -589,6 +610,7 @@ def main() -> None:
                 force_web_poster=args.forceWebPoster,
                 poster_resolver=args.posterResolver,
                 tmdb_api_key=args.tmdbApiKey,
+                import_to_apple_tv=args.import_to_apple_tv,
             )
     except TranscoderError as e:
         print(f"Error during transcoding: {e}")

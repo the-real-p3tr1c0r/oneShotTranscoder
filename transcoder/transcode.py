@@ -19,6 +19,13 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import shutil
 from pathlib import Path
 
+from transcoder.apple_tv_library import (
+    AppleTVTrack,
+    fetch_apple_tv_library_tracks,
+    find_existing_apple_tv_track,
+    import_file_to_apple_tv,
+    is_apple_tv_import_supported,
+)
 from transcoder.compatibility import (
     AppleTVCompatibility,
     CompatibilityStatus,
@@ -87,6 +94,8 @@ def dry_run_analyze(
     force_web_poster: bool = False,
     poster_resolver: str | None = None,
     tmdb_api_key: str | None = None,
+    import_to_apple_tv: bool = False,
+    library_tracks: list[AppleTVTrack] | None = None,
 ) -> None:
     """
     Analyze a video file without processing (dry run mode).
@@ -346,6 +355,29 @@ def dry_run_analyze(
     print("\n--- Output ---")
     output_path = get_output_path(input_path, target_dir, overwrite=False)
     print(f"  Output path: {output_path}")
+    if import_to_apple_tv:
+        if not is_apple_tv_import_supported():
+            print("  Apple TV Import: Not supported on this OS")
+        else:
+            tracks = library_tracks if library_tracks is not None else fetch_apple_tv_library_tracks()
+            existing = (
+                find_existing_apple_tv_track(media_metadata, effective_media_type, tracks)
+                if media_metadata
+                else None
+            )
+            if existing:
+                if existing.show and existing.season_number and existing.episode_number:
+                    print(
+                        f"  Apple TV Import: SKIP (already in library as "
+                        f"'{existing.show}' S{existing.season_number:02d}E{existing.episode_number:02d} - '{existing.name}')"
+                    )
+                else:
+                    year_str = f" ({existing.year})" if existing.year else ""
+                    print(
+                        f"  Apple TV Import: SKIP (already in library as '{existing.name}'{year_str})"
+                    )
+            else:
+                print("  Apple TV Import: Will import into TV.app and clean up staging .mp4")
     
     # Summary
     print("\n--- Summary ---")
@@ -379,6 +411,7 @@ def dry_run_all(
     force_web_poster: bool = False,
     poster_resolver: str | None = None,
     tmdb_api_key: str | None = None,
+    import_to_apple_tv: bool = False,
 ) -> None:
     """
     Analyze video files without processing (dry run mode for multiple files).
@@ -394,6 +427,7 @@ def dry_run_all(
         force_web_poster: If True, skip local poster images and use web sources
         poster_resolver: Optional poster resolver selector (auto/local/itunes/tmdb/wikimedia)
         tmdb_api_key: Optional TMDB API key for poster lookups
+        import_to_apple_tv: If True, check Apple TV library for duplicates and plan import
     """
     # Check if source is a file or directory
     if source_path.is_file():
@@ -411,6 +445,14 @@ def dry_run_all(
     else:
         print(f"Error: {source_path} does not exist")
         return
+
+    library_tracks: list[AppleTVTrack] | None = None
+    if import_to_apple_tv and is_apple_tv_import_supported():
+        try:
+            library_tracks = fetch_apple_tv_library_tracks()
+        except Exception as e:
+            print(f"Warning: Could not query Apple TV library: {e}")
+            library_tracks = []
     
     for video_file in video_files:
         dry_run_analyze(
@@ -424,6 +466,8 @@ def dry_run_all(
             force_web_poster,
             poster_resolver,
             tmdb_api_key,
+            import_to_apple_tv=import_to_apple_tv,
+            library_tracks=library_tracks,
         )
 
 
@@ -439,6 +483,8 @@ def transcode_file(
     force_web_poster: bool = False,
     poster_resolver: str | None = None,
     tmdb_api_key: str | None = None,
+    import_to_apple_tv: bool = False,
+    library_tracks: list[AppleTVTrack] | None = None,
 ) -> bool:
     """
     Transcode a single video file to MP4.
@@ -545,6 +591,27 @@ def transcode_file(
             elif detection.media_type == MediaType.MOVIE and isinstance(media_metadata, MovieMetadata):
                 year_suffix = f" ({media_metadata.year})" if media_metadata.year else ""
                 print(f"Detected Movie ({detection.pattern_name}): {media_metadata.movie_title}{year_suffix}")
+
+        if import_to_apple_tv:
+            if not is_apple_tv_import_supported():
+                print("Error: --import is only supported on macOS with Apple TV (TV.app).")
+                return False
+            tracks = library_tracks if library_tracks is not None else fetch_apple_tv_library_tracks()
+            existing = (
+                find_existing_apple_tv_track(media_metadata, effective_media_type, tracks)
+                if media_metadata
+                else None
+            )
+            if existing:
+                if existing.show and existing.season_number and existing.episode_number:
+                    print(
+                        f"[SKIP] Already in Apple TV library: "
+                        f"{existing.show} - S{existing.season_number:02d}E{existing.episode_number:02d} - {existing.name}\n"
+                    )
+                else:
+                    year_str = f" ({existing.year})" if existing.year else ""
+                    print(f"[SKIP] Already in Apple TV library: {existing.name}{year_str}\n")
+                return True
         
         text_subtitle_streams = get_text_subtitle_streams(probe_data)
         
@@ -688,7 +755,18 @@ def transcode_file(
         returncode, error_output = run_ffmpeg_with_progress(cmd, duration, output_path, input_size_bytes, total_frames, source_fps)
         
         if returncode == 0:
-            print(f"[OK] Successfully processed {input_path.name}\n")
+            if import_to_apple_tv:
+                print(f"Importing {output_path.name} into Apple TV library...")
+                _, imported_track = import_file_to_apple_tv(
+                    output_path,
+                    metadata=media_metadata,
+                    cleanup_staging=True,
+                )
+                if imported_track and library_tracks is not None:
+                    library_tracks.append(imported_track)
+                print(f"[OK] Successfully processed and imported {input_path.name}\n")
+            else:
+                print(f"[OK] Successfully processed {input_path.name}\n")
             return True
         else:
             print(f"[ERROR] Error processing {input_path.name}:")
@@ -717,6 +795,7 @@ def transcode_all(
     force_web_poster: bool = False,
     poster_resolver: str | None = None,
     tmdb_api_key: str | None = None,
+    import_to_apple_tv: bool = False,
 ) -> None:
     """
     Transcode video files from source path (file or directory).
@@ -733,6 +812,7 @@ def transcode_all(
         force_web_poster: If True, skip local poster images and use web sources
         poster_resolver: Optional poster resolver selector (auto/local/itunes/tmdb/wikimedia)
         tmdb_api_key: Optional TMDB API key for poster lookups
+        import_to_apple_tv: If True, check Apple TV library for duplicates, import finished MP4, and clean up staging file
     """
     # Check if source is a file or directory
     if source_path.is_file():
@@ -753,6 +833,13 @@ def transcode_all(
     else:
         print(f"Error: {source_path} does not exist or is not a valid file or directory")
         return
+
+    library_tracks: list[AppleTVTrack] | None = None
+    if import_to_apple_tv:
+        if not is_apple_tv_import_supported():
+            print("Error: --import is only supported on macOS with Apple TV (TV.app).")
+            return
+        library_tracks = fetch_apple_tv_library_tracks()
     
     success_count = 0
     for video_file in video_files:
@@ -768,6 +855,8 @@ def transcode_all(
             force_web_poster,
             poster_resolver,
             tmdb_api_key,
+            import_to_apple_tv=import_to_apple_tv,
+            library_tracks=library_tracks,
         ):
             success_count += 1
     

@@ -88,7 +88,12 @@ def metadata_to_ffmpeg_args(metadata: EpisodeMetadata | MovieMetadata) -> list[s
     Convert movie or TV metadata into ffmpeg CLI arguments.
     """
     if isinstance(metadata, MovieMetadata):
-        args: list[str] = ["-metadata", f"title={metadata.movie_title}"]
+        args: list[str] = [
+            "-metadata",
+            f"title={metadata.movie_title}",
+            "-metadata",
+            "media_type=9",
+        ]
         if metadata.year:
             args.extend(["-metadata", f"date={metadata.year}"])
         if metadata.edition:
@@ -99,6 +104,8 @@ def metadata_to_ffmpeg_args(metadata: EpisodeMetadata | MovieMetadata) -> list[s
         f"title={metadata.episode_title}",
         "-metadata",
         f"show={metadata.series_name}",
+        "-metadata",
+        "media_type=10",
     ]
     if metadata.air_date:
         args.extend(["-metadata", f"date={metadata.air_date}"])

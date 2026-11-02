@@ -535,16 +535,18 @@ def _clean_episode_title(value: str) -> str:
 def _split_trailing_year(value: str) -> tuple[str, int | None]:
     if not value:
         return "", None
-    match = YEAR_SUFFIX_PATTERN.search(value.strip())
+    stripped = value.strip(" -_.")
+    match = YEAR_SUFFIX_PATTERN.search(stripped)
     if match:
         year_value = int(match.group("year"))
-        trimmed = value[: match.start()].strip(" -_.")
+        trimmed = stripped[: match.start()].strip(" -_.")
         return trimmed, year_value
-    match = YEAR_TRAILING_PATTERN.search(value.strip())
+    match = YEAR_TRAILING_PATTERN.search(stripped)
     if match:
         year_value = int(match.group("year"))
-        trimmed = value[: match.start()].strip(" -_.")
-        return trimmed, year_value
+        if 1900 <= year_value <= 2099:
+            trimmed = stripped[: match.start()].strip(" -_.")
+            return trimmed, year_value
     return value, None
 
 

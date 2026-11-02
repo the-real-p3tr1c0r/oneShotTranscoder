@@ -65,6 +65,18 @@ from transcoder.media_patterns import (
                 "episode_title_missing": True,
             },
         ),
+        (
+            "The.Agency.2024.S02E01.Kick.the.Wasp's.Nest.1080p.WEBRip.10Bit.DDP5.1.x265-NeoNoir.mkv",
+            MediaType.TV_SHOW,
+            {
+                "series_name": "The Agency",
+                "year": 2024,
+                "season_number": 2,
+                "episode_number": 1,
+                "episode_title": "Kick the Wasp's Nest",
+                "episode_title_missing": False,
+            },
+        ),
     ],
 )
 def test_detect_metadata_tv(filename, expected_type, expected_fields):
